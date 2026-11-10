@@ -1,0 +1,12 @@
+.DS_Store
+.build/
+DerivedData/
+__pycache__/
+xcuserdata/
+*.xcuserstate
+*.app/
+*.zip
+Dependencies/*.tar.gz
+.env
+*.bbcapture
+!Tests/Fixtures/*.bbcapture

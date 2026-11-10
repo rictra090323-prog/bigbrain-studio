@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+export PYTHONDONTWRITEBYTECODE=1
+exec /usr/bin/python3 "$here/brain.py" "$@"
