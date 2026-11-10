@@ -153,6 +153,9 @@ final class BrainModel: ObservableObject {
     @Published var codex: CodexStatus?
     @Published var query = ""
     @Published var hits: [Hit] = []
+    @Published var atlasSearchHits: [Hit] = []
+    @Published var atlasSearching = false
+    @Published var atlasSearchVisible = false
     @Published var selected: Hit?
     @Published var note: Note?
     @Published var reply: AgentReply?
@@ -210,6 +213,7 @@ final class BrainModel: ObservableObject {
 
     private var lastOpened: (id: String, date: Date)?
     private var atlasGeneration = 0
+    private var atlasSearchGeneration = 0
     private var recentAtlasKey: String? { activeVault.map { "atlasRecent:" + $0 } }
 
     private func rememberAtlasItem(_ hit: Hit) {
@@ -272,6 +276,9 @@ final class BrainModel: ObservableObject {
         searching = false
         atlas = nil
         atlasBusy = false
+        atlasSearchHits = []
+        atlasSearching = false
+        atlasSearchVisible = false
         selected = nil
         note = nil
         reply = nil
@@ -299,6 +306,9 @@ final class BrainModel: ObservableObject {
         selected = nil
         note = nil
         hits = []
+        atlasSearchHits = []
+        atlasSearching = false
+        atlasSearchVisible = false
         searching = false
         if target == .skills { query = "" }
         if target == .writing {
@@ -338,6 +348,39 @@ final class BrainModel: ObservableObject {
         guard !query.isEmpty else { return }
         reply = nil
         show(.search)
+    }
+
+    func searchAtlasSuggestions() async {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        atlasSearchGeneration += 1
+        let request = atlasSearchGeneration
+        guard !term.isEmpty else {
+            atlasSearchHits = []
+            atlasSearching = false
+            atlasSearchVisible = false
+            return
+        }
+
+        atlasSearchHits = []
+        atlasSearching = true
+        atlasSearchVisible = true
+        do {
+            let scope = Distribution.store ? "note" : "all"
+            let result: [Hit] = try await Bridge.invoke(["search", "--limit", "8", "--scope", scope,
+                                                          "--fast", "--", term])
+            guard request == atlasSearchGeneration else { return }
+            atlasSearchHits = result
+            atlasSearching = false
+            atlasSearchVisible = !result.isEmpty
+        } catch {
+            guard request == atlasSearchGeneration else { return }
+            atlasSearching = false
+            self.error = error.localizedDescription
+        }
+    }
+
+    func hideAtlasSuggestions() {
+        atlasSearchVisible = false
     }
 
     func closeAtlasDetail() {
@@ -1079,6 +1122,7 @@ struct QueryBox: View {
     let placeholder: String
     var autofocus = true
     var prominent = false
+    var onFocusChange: ((Bool) -> Void)?
     var action: () -> Void
     var body: some View {
         HStack(spacing: 9) {
@@ -1086,6 +1130,7 @@ struct QueryBox: View {
             TextField(placeholder, text: $query).textFieldStyle(.plain).onSubmit(action)
                 .accessibilityLabel(placeholder).focused($fieldFocused)
                 .onAppear { if autofocus { fieldFocused = true } }
+                .onChange(of: fieldFocused) { _, focused in onFocusChange?(focused) }
             if !query.isEmpty {
                 Button { query = ""; action() } label: {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(muted)

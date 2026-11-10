@@ -17,7 +17,7 @@ Projektfilen, schemat och byggfasen har kontrollerats separat. Terminalbygget ha
 
 ## Prova Atlas och skrivläget
 
-Skriv en sökfras under **Atlas** och tryck Retur eller **Sök** för att öppna Bibliotekets träffar. Till höger visas upp till tio senast öppnade anteckningar i det aktuella biblioteket. Innan du har öppnat någon visas ett urval ur orben. Klicka på en rad för att förhandsvisa anteckningen och välj **Tillbaka till listan** för att återvända.
+Skriv en sökfras under **Atlas** för att få upp en dropdown med träffar direkt under sökfältet. Klicka på en träff för att förhandsvisa anteckningen, eller tryck Retur eller **Sök** för att öppna Bibliotekets träffar. Till höger visas upp till tio senast öppnade anteckningar i det aktuella biblioteket. Innan du har öppnat någon visas ett urval ur orben. Välj **Tillbaka till listan** för att återvända.
 
 Välj **Öppna anteckningen** i Atlas eller klicka på en träff i Biblioteket. **Skriv i helskärm** (⇧⌘F) öppnar samma redigerare över hela skärmen. **Avsluta skrivläge** återställer arbetsytan med samma anteckning. Format, spara och sökning efter samband finns i skrivläget.
 

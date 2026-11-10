@@ -188,12 +188,16 @@ struct AtlasView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             masthead
+                .zIndex(1)
             HStack(spacing: 12) {
                 starfield
                 inspector
             }
             footer
         }
+        .simultaneousGesture(SpatialTapGesture().onEnded { _ in
+            model.hideAtlasSuggestions()
+        })
         .padding(.horizontal, 21)
         .padding(.top, 14)
         .padding(.bottom, 19)
@@ -207,7 +211,90 @@ struct AtlasView: View {
             Text("Atlas").font(.system(size: 48, weight: .medium))
                 .tracking(-3.4).accessibilityAddTraits(.isHeader)
             QueryBox(query: $model.query, placeholder: "Sök med ord, begrepp eller en fråga…",
-                     autofocus: false, prominent: true, action: model.searchFromAtlas)
+                     autofocus: false, prominent: true,
+                     onFocusChange: { focused in
+                         if !focused { model.hideAtlasSuggestions() }
+                     },
+                     action: model.searchFromAtlas)
+                .overlay(alignment: .topLeading) {
+                    atlasSearchDropdown
+                        .offset(y: 62)
+                        .zIndex(10)
+                }
+                .task(id: model.query) {
+                    do {
+                        try await Task.sleep(for: .milliseconds(280))
+                        await model.searchAtlasSuggestions()
+                    } catch {}
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var atlasSearchDropdown: some View {
+        if model.atlasSearchVisible && (model.atlasSearching || !model.atlasSearchHits.isEmpty) {
+            VStack(alignment: .leading, spacing: 0) {
+                if model.atlasSearching && model.atlasSearchHits.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Söker…").font(.callout).foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                } else {
+                    HStack {
+                        Text("Sökträffar")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(model.atlasSearchHits.count)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 11)
+                    .padding(.bottom, 7)
+                    ForEach(model.atlasSearchHits) { hit in
+                        Button {
+                            model.hideAtlasSuggestions()
+                            model.select(hit)
+                        } label: {
+                            HStack(alignment: .top, spacing: 11) {
+                                Image(systemName: hit.kind == "skill" ? "square.stack.3d.up" :
+                                        hit.kind == "inbox" ? "tray" : "doc.text")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(atlasIce)
+                                    .frame(width: 22, height: 22)
+                                    .background(atlasIce.opacity(0.13), in: RoundedRectangle(cornerRadius: 6))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(hit.title)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                    Text(hit.excerpt.isEmpty ? hit.path : hit.excerpt.replacingOccurrences(of: "\n", with: " "))
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.horizontal, 6)
+                    }
+                }
+            }
+            .frame(maxWidth: 560, alignment: .leading)
+            .padding(.bottom, 6)
+            .background(atlasInk.opacity(0.97), in: RoundedRectangle(cornerRadius: 13))
+            .overlay { RoundedRectangle(cornerRadius: 13).stroke(atlasIce.opacity(0.24), lineWidth: 1) }
+            .shadow(color: .black.opacity(0.38), radius: 18, y: 8)
         }
     }
 
