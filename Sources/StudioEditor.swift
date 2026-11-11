@@ -117,6 +117,7 @@ struct StudioNoteView: View {
     @LocalState private var beforeLink: String?
     @LocalState private var thread: CGFloat = 0
     @LocalState private var replaceDraft = false
+    @LocalState private var showOutline = false
 
     init(model: BrainModel, hit: Hit, note: Note) {
         self.model = model
@@ -131,14 +132,64 @@ struct StudioNoteView: View {
     private var conflicting: Bool { draftRevision != baseline.revision || note.revision != baseline.revision }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        let visibleText = raw ? draft : editor.view.flatMap { $0.markdownMode ? nil : $0.string }
+            ?? StudioMarkdown.read(draft).string
+        return VStack(alignment: .leading, spacing: 9) {
+            documentToolbar
+            HStack(spacing: 18) {
+                if showOutline && !raw { outline }
+                StudioTextEditor(markdown: draft, raw: raw, busy: busy, control: editor, onChange: updateDraft)
+                    .id(raw)
+                    .padding(.horizontal, 19)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: 840, maxHeight: .infinity)
+                    .background(Color(red: 0.08, green: 0.105, blue: 0.16), in: RoundedRectangle(cornerRadius: 14))
+                    .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.12)).allowsHitTesting(false) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let suggestion { connection(suggestion) }
+            if !lookupStatus.isEmpty { Text(lookupStatus).font(.caption).foregroundStyle(.secondary) }
+            if !failure.isEmpty { Text(failure).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
             HStack {
-                Text(hit.title)
-                    .font(model.studioFocus ? .title2.weight(.semibold) : .headline)
-                    .lineLimit(1)
+                Text(busy ? "Sparar…" : conflicting ? "Sparad version har ändrats" : dirty ? "Osparade ändringar" : "Sparat lokalt")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("studio-save-status")
+                Spacer()
+                Text("\(visibleText.split(whereSeparator: \.isWhitespace).count.formatted()) ord · \(visibleText.count.formatted()) tecken")
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                if conflicting {
+                    Button("Kopiera utkast") { model.copy(draft) }
+                    Button("Hämta sparad") { replaceDraft = true }
+                } else {
+                    Button("Visa fil") { model.reveal(note.path) }.buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 27)
+        .padding(.top, 32)
+        .padding(.bottom, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear(perform: restoreDraft)
+        .alert("Byt till den sparade versionen?", isPresented: $replaceDraft) {
+            Button("Avbryt", role: .cancel) {}
+            Button("Hämta sparad", role: .destructive) {
+                baseline = note
+                draftRevision = note.revision
+                updateDraft(note.body)
+            }
+        } message: { Text("Kopiera utkastet först om du vill behålla dina ändringar.") }
+    }
+
+    private var documentToolbar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Button("Tillbaka", systemImage: "chevron.left", action: model.closeEditor)
+                    .keyboardShortcut("[", modifiers: .command)
+                    .disabled(busy)
+                Text(hit.title).font(.title2.weight(.semibold)).lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button(model.studioFocus ? "Avsluta skrivläge" : "Skriv i helskärm",
+                Button(model.studioFocus ? "Avsluta helskärm" : "Helskärm",
                        systemImage: model.studioFocus ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
                     if model.studioFocus {
                         model.leaveStudioFocus()
@@ -154,6 +205,7 @@ struct StudioNoteView: View {
                     .disabled(!dirty || busy || conflicting)
                     .buttonStyle(.borderedProminent)
             }
+            Divider()
             HStack {
                 Picker("Skrivverktyg", selection: $toolTab) {
                     ForEach(ToolTab.allCases, id: \.self) { tab in Text(tab.rawValue).tag(tab) }
@@ -162,49 +214,70 @@ struct StudioNoteView: View {
                 .labelsHidden()
                 .fixedSize()
                 Spacer()
-                Button {
-                    let action = NSMenuItem()
-                    action.tag = NSTextFinder.Action.showFindInterface.rawValue
-                    editor.view?.performTextFinderAction(action)
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-                .accessibilityLabel("Sök i anteckningen")
-                .help("Sök i anteckningen (⌘F)")
-                .keyboardShortcut("f", modifiers: .command)
+                Menu {
+                    Button("Sök i anteckningen") { find(.showFindInterface) }
+                        .keyboardShortcut("f", modifiers: .command)
+                    Button("Sök och ersätt") { find(.showReplaceInterface) }
+                        .keyboardShortcut("f", modifiers: [.command, .option])
+                        .disabled(busy)
+                } label: { Label("Sök", systemImage: "magnifyingglass") }
+                .fixedSize()
             }
             tools
-            StudioTextEditor(markdown: draft, raw: raw, busy: busy, control: editor, onChange: updateDraft)
-                .id(raw)
-                .background(Color.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 10))
-                .frame(minHeight: 160, maxHeight: .infinity)
-            if let suggestion { connection(suggestion) }
-            if !lookupStatus.isEmpty { Text(lookupStatus).font(.caption).foregroundStyle(.secondary) }
-            if !failure.isEmpty { Text(failure).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
-            HStack {
-                Text(busy ? "Sparar…" : conflicting ? "Sparad version har ändrats" : dirty ? "Osparade ändringar" : "Sparat lokalt")
+        }
+        .padding(13)
+        .modifier(StudioToolbarBackground())
+    }
+
+    private func find(_ action: NSTextFinder.Action) {
+        let item = NSMenuItem()
+        item.tag = action.rawValue
+        editor.view?.performTextFinderAction(item)
+    }
+
+    private var outline: some View {
+        let text = StudioMarkdown.read(draft)
+        let headings = text.string.components(separatedBy: "\n").reduce(into: (offset: 0, rows: [(Int, String, Int)]())) { output, title in
+            let location = output.offset
+            let length = (title as NSString).length
+            output.offset += length + 1
+            guard length > 0 else { return }
+            let kind = StudioMarkdown.paragraph(text.attribute(StudioMarkdown.block, at: location, effectiveRange: nil))
+            switch kind {
+            case .heading: output.rows.append((location, title, 0))
+            case .subheading: output.rows.append((location, title, 1))
+            case .smallHeading: output.rows.append((location, title, 2))
+            default: break
+            }
+        }.rows
+        return VStack(alignment: .leading, spacing: 9) {
+            Text("Rubriker").font(.headline).accessibilityAddTraits(.isHeader)
+            if headings.isEmpty {
+                Text("Använd rubrikformaten för att kunna hoppa mellan avsnitt.")
                     .font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("studio-save-status")
-                Spacer()
-                if conflicting {
-                    Button("Kopiera utkast") { model.copy(draft) }
-                    Button("Hämta sparad") { replaceDraft = true }
-                } else {
-                    Button("Visa fil") { model.reveal(note.path) }.buttonStyle(.plain).foregroundStyle(.secondary)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(headings, id: \.0) { heading in
+                        Button {
+                            let position = NSRange(location: heading.0, length: 0)
+                            guard let view = editor.view, position.location <= (view.string as NSString).length else { return }
+                            view.setSelectedRange(position)
+                            view.scrollRangeToVisible(position)
+                            view.window?.makeFirstResponder(view)
+                        } label: {
+                            Text(heading.1).lineLimit(2).multilineTextAlignment(.leading)
+                                .padding(.leading, CGFloat(heading.2) * 10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(.plain)
+                    }
                 }
             }
         }
-        .padding(model.studioFocus ? 24 : 13)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear(perform: restoreDraft)
-        .alert("Byt till den sparade versionen?", isPresented: $replaceDraft) {
-            Button("Avbryt", role: .cancel) {}
-            Button("Hämta sparad", role: .destructive) {
-                baseline = note
-                draftRevision = note.revision
-                updateDraft(note.body)
-            }
-        } message: { Text("Kopiera utkastet först om du vill behålla dina ändringar.") }
+        .padding(13)
+        .frame(width: 190)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var tools: some View {
@@ -230,6 +303,20 @@ struct StudioNoteView: View {
                 }
                 .accessibilityLabel("Kursiv").help("Kursiv (⌘I)")
                 .keyboardShortcut("i", modifiers: .command).disabled(raw || busy)
+                Button {
+                    editor.view?.changeEmphasis(StudioMarkdown.underline)
+                } label: {
+                    Image(systemName: "underline")
+                }
+                .accessibilityLabel("Understrykning").help("Understrykning (⌘U)")
+                .keyboardShortcut("u", modifiers: .command).disabled(raw || busy)
+                Button {
+                    editor.view?.changeEmphasis(StudioMarkdown.strike)
+                } label: {
+                    Image(systemName: "strikethrough")
+                }
+                .accessibilityLabel("Genomstrykning").help("Genomstrykning")
+                .disabled(raw || busy)
                 Divider().frame(height: 16)
                 formatButton(.list, icon: "list.bullet")
                 formatButton(.numbered, icon: "list.number")
@@ -271,8 +358,9 @@ struct StudioNoteView: View {
                     findConnection()
                 }
                 .disabled(busy || searching).help("Utgår från markerad text eller stycket där du skriver")
-                Text("\(draft.split(whereSeparator: \.isWhitespace).count.formatted()) ord")
-                    .font(.caption).foregroundStyle(.secondary)
+                Button(showOutline ? "Dölj rubriker" : "Visa rubriker", systemImage: "list.bullet.indent") {
+                    showOutline.toggle()
+                }.disabled(raw)
             }
             Spacer(minLength: 0)
         }
@@ -297,7 +385,10 @@ struct StudioNoteView: View {
                 Button("Dölj", systemImage: "xmark") { clearConnection() }.labelStyle(.iconOnly)
                     .buttonStyle(.plain).accessibilityLabel("Dölj samband")
             }
-            Button(suggestion.hit.title) { model.select(suggestion.hit, train: false) }
+            Button(suggestion.hit.title) {
+                model.show(.search)
+                model.select(suggestion.hit, train: false)
+            }
                 .buttonStyle(.link).accessibilityLabel("Öppna " + suggestion.hit.title)
             Text(suggestion.excerpt).font(.callout).lineLimit(3).textSelection(.enabled)
             HStack(spacing: 9) {
@@ -431,6 +522,16 @@ struct StudioNoteView: View {
                     model.acceptStudioEdit(latest, replacing: expected)
                 }
             }
+        }
+    }
+}
+
+private struct StudioToolbarBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 17))
+        } else {
+            content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 17))
         }
     }
 }

@@ -6,7 +6,7 @@ typealias LocalState<Value> = SwiftUI.State<Value>
 
 private let base = Color(red: 0.035, green: 0.047, blue: 0.102)
 private let panel = Color(red: 0.101, green: 0.127, blue: 0.213)
-private let inset = Color(red: 0.059, green: 0.082, blue: 0.153)
+let inset = Color(red: 0.059, green: 0.082, blue: 0.153)
 private let line = Color.white.opacity(0.085)
 private let muted = Color(red: 0.67, green: 0.70, blue: 0.77)
 private let ice = Color(red: 0.74, green: 0.77, blue: 1)
@@ -145,6 +145,12 @@ enum Bridge {
     }
 }
 
+enum AtlasSearchState {
+    case searching
+    case results([Hit])
+    case failed
+}
+
 @MainActor
 final class BrainModel: ObservableObject {
     @Published var section = Section.atlas
@@ -153,10 +159,11 @@ final class BrainModel: ObservableObject {
     @Published var codex: CodexStatus?
     @Published var query = ""
     @Published var hits: [Hit] = []
+    @Published private var atlasSearch: (term: String, state: AtlasSearchState)?
     @Published var selected: Hit?
     @Published var note: Note?
     @Published var reply: AgentReply?
-    @Published var editing: Note?
+    @Published private(set) var editorHit: Hit?
     @Published var showingCapture = false
     @Published var showingTranscription = false
     @Published var error: String?
@@ -210,6 +217,7 @@ final class BrainModel: ObservableObject {
 
     private var lastOpened: (id: String, date: Date)?
     private var atlasGeneration = 0
+    private var atlasSearchGeneration = 0
     private var recentAtlasKey: String? { activeVault.map { "atlasRecent:" + $0 } }
 
     private func rememberAtlasItem(_ hit: Hit) {
@@ -265,6 +273,7 @@ final class BrainModel: ObservableObject {
         generation += 1
         atlasGeneration += 1
         changeGeneration += 1
+        dismissAtlasSearch()
         lastOpened = nil
         query = ""
         leaveStudioFocus()
@@ -277,7 +286,7 @@ final class BrainModel: ObservableObject {
         reply = nil
         selectedChange = nil
         detail = nil
-        editing = nil
+        closeEditor()
         dashboard = nil
     }
 
@@ -292,8 +301,10 @@ final class BrainModel: ObservableObject {
     }
 
     func show(_ target: Section) {
+        closeEditor()
         guard section != target else { return }
         section = target
+        dismissAtlasSearch()
         leaveStudioFocus()
         generation += 1
         selected = nil
@@ -338,6 +349,42 @@ final class BrainModel: ObservableObject {
         guard !query.isEmpty else { return }
         reply = nil
         show(.search)
+    }
+
+    var atlasSearchTerm: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    func atlasSearchState(for term: String) -> AtlasSearchState? {
+        guard atlasSearch?.term == term else { return nil }
+        return atlasSearch?.state
+    }
+
+    func searchAtlasSuggestions(for term: String) async {
+        guard !Task.isCancelled, section == .atlas, !term.isEmpty, atlasSearchTerm == term else { return }
+        atlasSearchGeneration += 1
+        let request = atlasSearchGeneration
+        atlasSearch = nil
+        do {
+            try await Task.sleep(for: .milliseconds(280))
+        } catch { return }
+        guard request == atlasSearchGeneration, !Task.isCancelled, atlasSearchTerm == term else { return }
+
+        atlasSearch = (term, .searching)
+        let state: AtlasSearchState
+        do {
+            let scope = Distribution.store ? "note" : "all"
+            let hits: [Hit] = try await Bridge.invoke(["search", "--limit", "8", "--scope", scope,
+                                                       "--fast", "--", term])
+            state = .results(hits)
+        } catch {
+            state = .failed
+        }
+        guard request == atlasSearchGeneration, !Task.isCancelled, atlasSearchTerm == term else { return }
+        atlasSearch = (term, state)
+    }
+
+    func dismissAtlasSearch() {
+        atlasSearchGeneration += 1
+        atlasSearch = nil
     }
 
     func closeAtlasDetail() {
@@ -533,17 +580,17 @@ final class BrainModel: ObservableObject {
         }
     }
 
-    func edit(_ note: Note, replacement: String) async -> Bool {
-        do {
-            let updated: Note = try await Bridge.invoke(["save-note", note.path, note.revision, "-"], input: Data(replacement.utf8))
-            if selected?.path == updated.path { self.note = updated }
-            await refresh()
-            notify("Anteckningen är sparad")
-            return true
-        } catch {
-            self.error = error.localizedDescription
-            return false
-        }
+    func openEditor(for hit: Hit) {
+        guard hit.kind == "note", !hit.path.hasPrefix("Codex Skills/"),
+              let note, note.path == hit.path else { return }
+        dismissAtlasSearch()
+        editorHit = hit
+    }
+
+    func closeEditor() {
+        guard editorHit != nil else { return }
+        editorHit = nil
+        leaveStudioFocus()
     }
 
     func acceptStudioEdit(_ updated: Note, replacing expected: Note) {
@@ -1074,34 +1121,48 @@ struct AnswerView: View {
 }
 
 struct QueryBox: View {
+    static let prominentFont = Font.system(size: 16)
+    static let prominentRadius: CGFloat = 18
+    static let focusBorder = Color.accentColor.opacity(0.85)
+
     @FocusState private var fieldFocused: Bool
     @Binding var query: String
     let placeholder: String
     var autofocus = true
     var prominent = false
+    var focus: FocusState<Bool>.Binding?
+    var attachedResults = false
     var action: () -> Void
+    private var searchFocus: FocusState<Bool>.Binding { focus ?? $fieldFocused }
+
     var body: some View {
         HStack(spacing: 9) {
             Image(systemName: "magnifyingglass").foregroundStyle(ice)
             TextField(placeholder, text: $query).textFieldStyle(.plain).onSubmit(action)
-                .accessibilityLabel(placeholder).focused($fieldFocused)
-                .onAppear { if autofocus { fieldFocused = true } }
+                .accessibilityLabel(placeholder).focused(searchFocus)
+                .onAppear { if autofocus { searchFocus.wrappedValue = true } }
             if !query.isEmpty {
                 Button { query = ""; action() } label: {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(muted)
                 }.buttonStyle(.plain).accessibilityLabel("Rensa sökningen")
             }
-            if prominent {
-                Button("Sök", action: action)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
         }
-        .font(prominent ? .system(size: 16) : .body)
+        .font(prominent ? Self.prominentFont : .body)
         .padding(.horizontal, prominent ? 17 : 12)
         .padding(.vertical, prominent ? 15 : 10)
-        .background(inset, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(fieldFocused ? lime.opacity(0.60) : .white.opacity(0.18)))
+        .background(inset, in: outline)
+        .overlay {
+            outline.strokeBorder(attachedResults || searchFocus.wrappedValue ? Self.focusBorder : .white.opacity(0.18))
+                .mask { Rectangle().padding(.bottom, attachedResults ? 1 : 0) }
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var outline: UnevenRoundedRectangle {
+        let radius = prominent ? Self.prominentRadius : 10
+        let lowerRadius = attachedResults ? 0 : radius
+        return UnevenRoundedRectangle(topLeadingRadius: radius, bottomLeadingRadius: lowerRadius,
+                                     bottomTrailingRadius: lowerRadius, topTrailingRadius: radius)
     }
 }
 
@@ -1135,71 +1196,61 @@ struct LibraryView: View {
     @ObservedObject var model: BrainModel
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            if !model.studioFocus {
-                if model.section == .inbox {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 5) {
-                            SmallLabel(text: "Råmaterial", tint: lime)
-                            Text("Källor på väg in").font(.system(size: 24, weight: .medium, design: .serif))
-                        }
-                        Spacer()
-                        ActionButton(title: "Uppdatera", icon: "arrow.clockwise") { Task { await model.search() } }
+            if model.section == .inbox {
+                HStack {
+                    VStack(alignment: .leading, spacing: 5) {
+                        SmallLabel(text: "Råmaterial", tint: lime)
+                        Text("Källor på väg in").font(.system(size: 24, weight: .medium, design: .serif))
                     }
-                } else {
-                    QueryBox(query: $model.query, placeholder: model.section == .skills ? "Sök efter en återanvändbar metod…" : "Sök med ord, begrepp eller en fråga…") {
-                        Task { await model.search() }
-                    }
-                    .task(id: model.query) {
-                        do { try await Task.sleep(for: .milliseconds(280)); await model.search() } catch {}
-                    }
+                    Spacer()
+                    ActionButton(title: "Uppdatera", icon: "arrow.clockwise") { Task { await model.search() } }
                 }
-                if model.section == .search && !Distribution.store {
-                    HStack(spacing: 6) {
-                        Badge(text: model.dashboard?.vectors == true ? "HYBRIDSÖK" : "TEXTSÖK", tint: lime)
-                        Spacer()
-                        ActionButton(title: "Källpaket", icon: "square.on.square") { model.copyContext() }
-                        ActionButton(title: "Backtest", icon: "chart.xyaxis.line") {
-                            Task { _ = await model.run("audit", query: model.query) }
-                        }
-                        ActionButton(title: "Motläs", icon: "arrow.left.arrow.right") {
-                            Task { _ = await model.run("challenge", query: model.query) }
-                        }
-                        ActionButton(title: "Idélabb", icon: "point.3.connected.trianglepath.dotted") {
-                            Task { _ = await model.run("explore", query: model.query) }
-                        }
-                        ActionButton(title: model.running ? "Arbetar…" : "Fråga", icon: "sparkle", primary: true) {
-                            Task { _ = await model.run("ask", query: model.query) }
-                        }
-                    }.disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.running)
+            } else {
+                QueryBox(query: $model.query, placeholder: model.section == .skills ? "Sök efter en återanvändbar metod…" : "Sök med ord, begrepp eller en fråga…") {
+                    Task { await model.search() }
+                }
+                .task(id: model.query) {
+                    do { try await Task.sleep(for: .milliseconds(280)); await model.search() } catch {}
                 }
             }
+            if model.section == .search && !Distribution.store {
+                HStack(spacing: 6) {
+                    Badge(text: model.dashboard?.vectors == true ? "HYBRIDSÖK" : "TEXTSÖK", tint: lime)
+                    Spacer()
+                    ActionButton(title: "Källpaket", icon: "square.on.square") { model.copyContext() }
+                    ActionButton(title: "Backtest", icon: "chart.xyaxis.line") {
+                        Task { _ = await model.run("audit", query: model.query) }
+                    }
+                    ActionButton(title: "Motläs", icon: "arrow.left.arrow.right") {
+                        Task { _ = await model.run("challenge", query: model.query) }
+                    }
+                    ActionButton(title: "Idélabb", icon: "point.3.connected.trianglepath.dotted") {
+                        Task { _ = await model.run("explore", query: model.query) }
+                    }
+                    ActionButton(title: model.running ? "Arbetar…" : "Fråga", icon: "sparkle", primary: true) {
+                        Task { _ = await model.run("ask", query: model.query) }
+                    }
+                }.disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.running)
+            }
             HStack(alignment: .top, spacing: 13) {
-                if !model.studioFocus {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            SmallLabel(text: model.section == .skills ? "Metoder" : model.section == .inbox ? "Inkorg" : "Träffar")
-                            Spacer()
-                            if model.searching { ProgressView().controlSize(.small) }
-                        }
-                        ScrollView {
-                            LazyVStack(spacing: 6) {
-                                if model.hits.isEmpty && !model.searching {
-                                    EmptyPanel(icon: model.section.icon, title: model.section == .inbox ? "Inkorgen är tom" : "Inga träffar",
-                                               detail: model.section == .inbox ? "Lägg till en källa för att börja." : "Prova ett mer specifikt ord eller ämne.")
-                                }
-                                ForEach(model.hits) { hit in
-                                    Button { model.select(hit) } label: { HitCell(hit: hit, active: model.selected?.id == hit.id) }.buttonStyle(.plain)
-                                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        SmallLabel(text: model.section == .skills ? "Metoder" : model.section == .inbox ? "Inkorg" : "Träffar")
+                        Spacer()
+                        if model.searching { ProgressView().controlSize(.small) }
+                    }
+                    ScrollView {
+                        LazyVStack(spacing: 6) {
+                            if model.hits.isEmpty && !model.searching {
+                                EmptyPanel(icon: model.section.icon, title: model.section == .inbox ? "Inkorgen är tom" : "Inga träffar",
+                                           detail: model.section == .inbox ? "Lägg till en källa för att börja." : "Prova ett mer specifikt ord eller ämne.")
+                            }
+                            ForEach(model.hits) { hit in
+                                Button { model.select(hit) } label: { HitCell(hit: hit, active: model.selected?.id == hit.id) }.buttonStyle(.plain)
                             }
                         }
-                    }.frame(width: 285)
-                }
-                if Distribution.store, model.reply?.answer == nil, let hit = model.selected, let note = model.note,
-                   hit.kind == "note", !hit.path.hasPrefix("Codex Skills/"), hit.path == note.path {
-                    Panel {
-                        StudioNoteView(model: model, hit: hit, note: note).id(note.file)
-                    }.frame(maxWidth: model.studioFocus ? 880 : .infinity, maxHeight: .infinity)
-                } else {
+                    }
+                }.frame(width: 285)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         if let reply = model.reply, let answer = reply.answer, model.section != .skills {
@@ -1227,7 +1278,6 @@ struct LibraryView: View {
                         }
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1256,8 +1306,8 @@ struct NoteView: View {
                         ActionButton(title: model.running ? "Läser…" : "Analysera källan", icon: "sparkle", primary: true) {
                             Task { _ = await model.run("ingest", path: hit.path) }
                         }.disabled(model.running)
-                    } else if hit.kind == "note", !hit.path.hasPrefix("Codex Skills/"), let note = model.note {
-                        ActionButton(title: "Redigera", icon: "pencil") { model.editing = note }
+                    } else if hit.kind == "note", !hit.path.hasPrefix("Codex Skills/"), let note = model.note, note.path == hit.path {
+                        ActionButton(title: "Redigera", icon: "pencil") { model.openEditor(for: hit) }
                         ActionButton(title: "Sök relaterat", icon: "link") {
                             linking = true
                             Task {
@@ -1738,50 +1788,14 @@ struct CaptureView: View {
     }
 }
 
-extension Note: Identifiable {
-    var id: String { path }
-}
-
-struct ProposeView: View {
-    @ObservedObject var model: BrainModel
-    @Environment(\.dismiss) var dismiss
-    let note: Note
-    @LocalState private var replacement: String
-    @LocalState private var saving = false
-
-    init(model: BrainModel, note: Note) {
-        self.model = model
-        self.note = note
-        _replacement = State(initialValue: note.body)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            SmallLabel(text: "Bibliotek / Redigera", tint: lime)
-            Text(note.path).font(.system(size: 21, weight: .medium, design: .serif))
-            EditorField(title: "Ny version", text: $replacement, height: 310)
-            HStack {
-                Spacer()
-                ActionButton(title: "Avbryt") { dismiss() }
-                ActionButton(title: "Spara ändringen", icon: "checkmark", primary: true) {
-                    Task {
-                        saving = true
-                        defer { saving = false }
-                        if await model.edit(note, replacement: replacement) { dismiss() }
-                    }
-                }.disabled(saving || replacement == note.body || replacement.isEmpty)
-            }
-        }.padding(23).frame(width: 615).background(base)
-    }
-}
-
 struct RootView: View {
     @ObservedObject var model: BrainModel
-    var body: some View {
+
+    private var workspace: some View {
         HStack(spacing: 0) {
-            if !model.studioFocus { Sidebar(model: model) }
+            Sidebar(model: model)
             VStack(spacing: 0) {
-                if !model.studioFocus { Header(model: model) }
+                Header(model: model)
                 switch model.section {
                 case .atlas: AtlasView(model: model)
                 case .radar: RadarView(model: model)
@@ -1791,6 +1805,21 @@ struct RootView: View {
                 case .settings: SettingsView(model: model)
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            workspace
+                .navigationDestination(item: Binding(get: { model.editorHit }, set: {
+                    if $0 == nil { model.closeEditor() }
+                })) { hit in
+                    if let note = model.note, note.path == hit.path {
+                        StudioNoteView(model: model, hit: hit, note: note)
+                            .id(note.file)
+                            .navigationBarBackButtonHidden()
+                    }
+                }
         }
         .frame(minWidth: 975, minHeight: 655)
         .foregroundStyle(.white)
@@ -1818,7 +1847,6 @@ struct RootView: View {
         .sheet(isPresented: $model.showingTranscription) {
             if #available(macOS 26.0, *) { TranscriptionView(model: model) }
         }
-        .sheet(item: $model.editing) { ProposeView(model: model, note: $0) }
         .alert("BigBrain", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
@@ -1842,12 +1870,12 @@ struct BigBrainApp: App {
             .commands {
                 CommandGroup(replacing: .newItem) {
                     Button("Fånga snabbt") { model.showingCapture = true }.keyboardShortcut("n", modifiers: .command)
-                        .disabled(model.studioFocus)
+                        .disabled(model.editorHit != nil)
                     Button("Sök i biblioteket") { model.show(.search) }.keyboardShortcut("k", modifiers: .command)
-                        .disabled(model.studioFocus)
+                        .disabled(model.editorHit != nil)
                 }
                 CommandGroup(after: .importExport) {
-                    Button("Importera från iPhone…") { model.choosePhoneCapture() }.disabled(model.importing || model.studioFocus)
+                    Button("Importera från iPhone…") { model.choosePhoneCapture() }.disabled(model.importing || model.editorHit != nil)
                 }
             }
     }

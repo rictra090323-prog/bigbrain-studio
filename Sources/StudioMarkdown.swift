@@ -50,8 +50,8 @@ enum StudioParagraph: String, CaseIterable {
 enum StudioMarkdown {
     static let block = NSAttributedString.Key("BigBrainParagraph")
     static let emphasis = NSAttributedString.Key("BigBrainEmphasis")
-    static let bold = 1, italic = 2
-    private static let spans = try! NSRegularExpression(pattern: #"(?<!\*)(\*{1,3})([^*]+?)\1(?!\*)"#)
+    static let bold = 1, italic = 2, underline = 4, strike = 8
+    private static let spans = try! NSRegularExpression(pattern: #"(?<!\*)(\*{1,3})([^*]+?)\1(?!\*)|<u>([^<>]+)</u>|(?<!~)~~([^~]+)~~(?!~)"#)
 
     static func style(_ paragraph: StudioParagraph = .text, _ marks: Int = 0) -> [NSAttributedString.Key: Any] {
         let size: CGFloat = switch paragraph {
@@ -73,7 +73,8 @@ enum StudioMarkdown {
             layout.headIndent = 18
         }
         return [.font: font, .foregroundColor: paragraph == .quote ? NSColor.secondaryLabelColor : NSColor.labelColor,
-                .paragraphStyle: layout,
+                .paragraphStyle: layout, .underlineStyle: marks & underline == 0 ? 0 : NSUnderlineStyle.single.rawValue,
+                .strikethroughStyle: marks & strike == 0 ? 0 : NSUnderlineStyle.single.rawValue,
                 block: paragraph.rawValue, emphasis: marks]
     }
 
@@ -92,7 +93,8 @@ enum StudioMarkdown {
             if (index == 0 && trimmed == "---") || (frontMatter && trimmed == "---") { frontMatter.toggle() }
             let taskMarker = ["- [ ] ", "- [x] "].first(where: line.hasPrefix)
             let inlineSource = taskMarker.map { line.dropFirst($0.count) } ?? line.dropFirst(line.hasPrefix("> ") ? 2 : 0)
-            let literal = frontMatter || fence != nil || marker != nil || inlineSource.contains { "[]<>_|`\\".contains($0) }
+            let markup = inlineSource.replacingOccurrences(of: "<u>", with: "").replacingOccurrences(of: "</u>", with: "")
+            let literal = frontMatter || fence != nil || marker != nil || markup.contains { "[]<>_|`\\".contains($0) }
             if let marker, fence == nil { fence = marker }
             else if marker == fence && marker != nil { fence = nil }
             let kind: StudioParagraph
@@ -110,22 +112,34 @@ enum StudioMarkdown {
                 } ?? .text
                 content = String(line.dropFirst(kind.prefix.count))
             }
-            let string = content as NSString
             if literal {
                 result.append(NSAttributedString(string: content, attributes: style(kind)))
-                continue
+            } else {
+                appendInline(content, paragraph: kind, to: result)
             }
-            var start = 0
-            for match in spans.matches(in: content, range: NSRange(location: 0, length: string.length)) {
-                let plain = NSRange(location: start, length: match.range.location - start)
-                result.append(NSAttributedString(string: string.substring(with: plain), attributes: style(kind)))
-                let marks = match.range(at: 1).length == 3 ? bold | italic : match.range(at: 1).length == 2 ? bold : italic
-                result.append(NSAttributedString(string: string.substring(with: match.range(at: 2)), attributes: style(kind, marks)))
-                start = NSMaxRange(match.range)
-            }
-            result.append(NSAttributedString(string: string.substring(from: start), attributes: style(kind)))
         }
         return write(result) == source ? result : NSAttributedString(string: source, attributes: style())
+    }
+
+    private static func appendInline(_ content: String, paragraph: StudioParagraph, marks: Int = 0,
+                                     to result: NSMutableAttributedString) {
+        let string = content as NSString
+        var start = 0
+        for match in spans.matches(in: content, range: NSRange(location: 0, length: string.length)) {
+            let plain = NSRange(location: start, length: match.range.location - start)
+            result.append(NSAttributedString(string: string.substring(with: plain), attributes: style(paragraph, marks)))
+            if match.range(at: 1).location != NSNotFound {
+                let length = match.range(at: 1).length
+                let extra = length == 3 ? bold | italic : length == 2 ? bold : italic
+                appendInline(string.substring(with: match.range(at: 2)), paragraph: paragraph, marks: marks | extra, to: result)
+            } else if match.range(at: 3).location != NSNotFound {
+                appendInline(string.substring(with: match.range(at: 3)), paragraph: paragraph, marks: marks | underline, to: result)
+            } else {
+                appendInline(string.substring(with: match.range(at: 4)), paragraph: paragraph, marks: marks | strike, to: result)
+            }
+            start = NSMaxRange(match.range)
+        }
+        result.append(NSAttributedString(string: string.substring(from: start), attributes: style(paragraph, marks)))
     }
 
     static func write(_ text: NSAttributedString) -> String {
@@ -143,13 +157,16 @@ enum StudioMarkdown {
             text.enumerateAttribute(emphasis, in: NSRange(location: offset + markerLength, length: length - markerLength)) { value, range, _ in
                 let content = whole.substring(with: range)
                 let marks = value as? Int ?? 0
-                let marker = String(repeating: "*", count: (marks & bold == 0 ? 0 : 2) + (marks & italic == 0 ? 0 : 1))
+                let stars = String(repeating: "*", count: (marks & bold == 0 ? 0 : 2) + (marks & italic == 0 ? 0 : 1))
+                let u = marks & underline == 0 ? "" : "<u>"
+                let endU = marks & underline == 0 ? "" : "</u>"
+                let strike = marks & Self.strike == 0 ? "" : "~~"
                 let trimmed = content.trimmingCharacters(in: .whitespaces)
-                guard !marker.isEmpty, !trimmed.isEmpty, let inner = content.range(of: trimmed) else {
+                guard marks != 0, !trimmed.isEmpty, let inner = content.range(of: trimmed) else {
                     result += content
                     return
                 }
-                result += content[..<inner.lowerBound] + marker + trimmed + marker + content[inner.upperBound...]
+                result += content[..<inner.lowerBound] + strike + u + stars + trimmed + stars + endU + strike + content[inner.upperBound...]
             }
             return result
         }.joined(separator: "\n")
