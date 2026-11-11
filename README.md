@@ -17,11 +17,11 @@ Projektfilen, schemat och byggfasen har kontrollerats separat. Terminalbygget ha
 
 ## Prova Atlas och skrivläget
 
-Skriv en sökfras under **Atlas** och tryck Retur eller **Sök** för att öppna Bibliotekets träffar. Till höger visas upp till tio senast öppnade anteckningar i det aktuella biblioteket. Innan du har öppnat någon visas ett urval ur orben. Klicka på en rad för att förhandsvisa anteckningen och välj **Tillbaka till listan** för att återvända.
+Skriv en sökfras under **Atlas** för att visa upp till åtta träffar under sökfältet. Välj en träff för att förhandsvisa den i Atlas. Tryck Retur för att öppna träffarna i Biblioteket. Tryck Esc eller klicka utanför sökningen för att stänga listan. Till höger visas upp till tio senast öppnade anteckningar i det aktuella biblioteket. Innan du har öppnat någon visas ett urval ur orben. Klicka på en rad för att förhandsvisa anteckningen och välj **Tillbaka till listan** för att återvända.
 
-Välj **Öppna anteckningen** i Atlas eller klicka på en träff i Biblioteket. **Skriv i helskärm** (⇧⌘F) öppnar samma redigerare över hela skärmen. **Avsluta skrivläge** återställer arbetsytan med samma anteckning. Format, spara och sökning efter samband finns i skrivläget.
+Välj **Öppna i redigeraren** i Atlas eller **Redigera** i Biblioteket. Anteckningen öppnas på en egen dokumentsida. **Tillbaka** återställer föregående vy med samma val. **Helskärm** (⇧⌘F) ger dokumentet hela skärmen.
 
-Öppna en anteckning i Bibliotek och klicka i texten. I **Start** finns tre rubriknivåer, citat, fetstil, kursiv, punktlistor, numrerade listor och checklistor. Sätt markören i en checklisterad och använd knappen med en bock eller **⇧⌘↩**. Tryck **⌘F** för att söka i anteckningen och **⌘S** för att spara. Utkast lagras lokalt under arbetet.
+I **Start** finns rubriker, citat, fetstil, kursiv, understrykning, genomstrykning, punktlistor, numrerade listor och checklistor. Använd **Sök** för att hitta eller ersätta text. I **Visa** kan du öppna dokumentets rubriklista och hoppa mellan avsnitt. Tryck **⌘S** för att spara. Utkast lagras lokalt under arbetet.
 
 I **Exportera** kan du välja **PDF**, **Word** eller **Markdown**. Exporten utgår från den öppna texten, inklusive osparade ändringar. PDF sidbryts till A4 och Word skapar en redigerbar `.docx`. Båda återger formaten som stöds av den formaterade skrivytan. Markdown bevarar den fullständiga källtexten.
 

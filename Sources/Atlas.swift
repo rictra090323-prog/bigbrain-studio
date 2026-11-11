@@ -177,6 +177,8 @@ struct AtlasOrbit: View {
 
 struct AtlasView: View {
     @ObservedObject var model: BrainModel
+    @FocusState private var searchFocused: Bool
+    @LocalState private var searchPresented = false
 
     private var graph: AtlasSnapshot? { model.atlas }
     private var node: AtlasNode? { graph?.nodes.first { $0.id == model.selected?.id } }
@@ -187,12 +189,18 @@ struct AtlasView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            masthead
-            HStack(spacing: 12) {
-                starfield
-                inspector
+            VStack(alignment: .leading, spacing: 0) {
+                masthead
+                HStack(spacing: 12) {
+                    starfield
+                    inspector
+                }
+                .padding(.top, 13)
+                .simultaneousGesture(TapGesture().onEnded { dismissSearch() })
+                .overlay(alignment: .topLeading) { searchDropdown }
             }
             footer
+                .simultaneousGesture(TapGesture().onEnded { dismissSearch() })
         }
         .padding(.horizontal, 21)
         .padding(.top, 14)
@@ -200,15 +208,119 @@ struct AtlasView: View {
         .task(id: model.dashboard?.config.vault) {
             await model.loadAtlas()
         }
+        .onKeyPress(.escape) {
+            guard searchPresented else { return .ignored }
+            dismissSearch()
+            return .handled
+        }
+        .onDisappear(perform: dismissSearch)
+    }
+
+    private var visibleSearchState: AtlasSearchState? {
+        guard searchPresented else { return nil }
+        return model.atlasSearchState(for: model.atlasSearchTerm)
     }
 
     private var masthead: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        let term = searchPresented ? model.atlasSearchTerm : ""
+        return VStack(alignment: .leading, spacing: 11) {
             Text("Atlas").font(.system(size: 48, weight: .medium))
                 .tracking(-3.4).accessibilityAddTraits(.isHeader)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { dismissSearch() }
             QueryBox(query: $model.query, placeholder: "Sök med ord, begrepp eller en fråga…",
-                     autofocus: false, prominent: true, action: model.searchFromAtlas)
+                     autofocus: false, prominent: true, focus: $searchFocused,
+                     attachedResults: visibleSearchState != nil, action: model.searchFromAtlas)
+                .simultaneousGesture(TapGesture().onEnded { searchPresented = true })
+                .onChange(of: model.query) { _, _ in
+                    if searchFocused { searchPresented = true }
+                }
+                .task(id: term) { await model.searchAtlasSuggestions(for: term) }
         }
+    }
+
+    private func dismissSearch() {
+        guard searchPresented else { return }
+        searchPresented = false
+        searchFocused = false
+        model.dismissAtlasSearch()
+    }
+
+    @ViewBuilder
+    private var searchDropdown: some View {
+        if let state = visibleSearchState {
+            Group {
+                switch state {
+                case .searching:
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Söker…")
+                    }
+                    .padding(12)
+                case .results(let hits) where hits.isEmpty:
+                    Text("Inga träffar").padding(12)
+                case .results(let hits):
+                    ViewThatFits(in: .vertical) {
+                        searchRows(hits)
+                        ScrollView { searchRows(hits) }
+                    }
+                    .frame(maxHeight: 288)
+                case .failed:
+                    Text("Kunde inte visa träffar. Tryck Retur för att söka i Biblioteket.")
+                        .padding(12)
+                }
+            }
+            .font(QueryBox.prominentFont)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(inset.opacity(0.82), in: searchPanelShape)
+            .background(.regularMaterial, in: searchPanelShape)
+            .clipShape(searchPanelShape)
+            .overlay {
+                searchPanelShape.strokeBorder(QueryBox.focusBorder)
+                    .mask { Rectangle().padding(.top, 1) }
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .top) {
+                Rectangle().fill(.white.opacity(0.11)).frame(height: 1)
+                    .padding(.horizontal, 16).allowsHitTesting(false)
+            }
+            .shadow(color: .black.opacity(0.30), radius: 13, y: 7)
+        }
+    }
+
+    private var searchPanelShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(bottomLeadingRadius: QueryBox.prominentRadius,
+                               bottomTrailingRadius: QueryBox.prominentRadius)
+    }
+
+    private func searchRows(_ hits: [Hit]) -> some View {
+        VStack(spacing: 2) {
+            ForEach(hits) { hit in
+                Button {
+                    dismissSearch()
+                    model.select(hit)
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: hit.kind == "skill" ? "square.stack.3d.up" :
+                                hit.kind == "inbox" ? "tray" : "doc.text")
+                            .frame(width: 16).accessibilityHidden(true)
+                        Text(hit.title).lineLimit(1).layoutPriority(1)
+                        Text("·").foregroundStyle(.secondary).accessibilityHidden(true)
+                        Text(hit.excerpt.isEmpty ? hit.path : hit.excerpt.replacingOccurrences(of: "\n", with: " "))
+                            .foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .font(QueryBox.prominentFont)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(AtlasResultStyle())
+                .help(hit.title)
+            }
+        }
+        .padding(7)
     }
 
     private var starfield: some View {
@@ -297,11 +409,19 @@ struct AtlasView: View {
                 Text(node.label + " · " + node.degree.formatted() + " kopplingar")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            Button("Öppna anteckningen", systemImage: "arrow.up.right") {
-                model.reply = nil
-                model.show(.search)
-                model.select(item, train: false)
-            }.buttonStyle(.borderedProminent)
+            if item.kind == "note", !item.path.hasPrefix("Codex Skills/") {
+                Button("Öppna i redigeraren", systemImage: "square.and.pencil") {
+                    model.openEditor(for: item)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.note?.path != item.path)
+            } else {
+                Button("Visa i biblioteket", systemImage: "arrow.up.right") {
+                    model.reply = nil
+                    model.show(.search)
+                    model.select(item, train: false)
+                }.buttonStyle(.borderedProminent)
+            }
 
             if let note = model.note {
                 let plain = note.body.split(separator: "\n").filter { !$0.hasPrefix("#") }.joined(separator: " ")
@@ -376,6 +496,24 @@ struct AtlasView: View {
         HStack(spacing: 5) {
             Text(value.formatted()).font(.system(size: 12, weight: .semibold, design: .monospaced))
             Text(label).foregroundStyle(.white.opacity(0.59)).font(.system(size: 11))
+        }
+    }
+}
+
+private struct AtlasResultStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        AtlasResultRow(label: configuration.label, pressed: configuration.isPressed)
+    }
+
+    private struct AtlasResultRow<Label: View>: View {
+        let label: Label
+        let pressed: Bool
+        @LocalState private var hovering = false
+
+        var body: some View {
+            label
+                .background(pressed || hovering ? Color.accentColor.opacity(0.88) : .clear, in: Capsule())
+                .onHover { hovering = $0 }
         }
     }
 }

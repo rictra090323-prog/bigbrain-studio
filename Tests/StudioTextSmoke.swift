@@ -11,6 +11,7 @@ struct StudioTextSmoke {
             "# Rubrik\n\n[Stöd](<./Fil.md>)\nOrd med \\* och `kod`.\n\n",
             "Två ** markerade ** och **en** slutrad   ",
             "### Fördjupning\n> Ett *citat*\n9. Steg\n- [ ] Läs **sidan** 🍓\n- [x] Anteckna\n- [X] Äldre checklista\n> [Källa](./källa.md)\n",
+            "Formatering med <u>understrykning 🍓</u>, ~~genomstrykning~~ och ~~<u>***allt***</u>~~.",
             ""
         ]
         for document in documents {
@@ -34,6 +35,16 @@ struct StudioTextSmoke {
         precondition(StudioMarkdown.write(editor.textStorage!).contains("***religion***"))
         editor.changeParagraph(.heading)
         precondition(StudioMarkdown.write(editor.textStorage!).hasPrefix("# Ord om ***religion***"))
+        let combined = (editor.string as NSString).range(of: "religion")
+        editor.setSelectedRange(combined)
+        editor.changeEmphasis(StudioMarkdown.underline)
+        editor.changeEmphasis(StudioMarkdown.strike)
+        let saved = StudioMarkdown.write(editor.textStorage!)
+        precondition(saved.contains("~~<u>***religion***</u>~~"))
+        let reopened = StudioMarkdown.read(saved)
+        let reopenedRange = (reopened.string as NSString).range(of: "religion")
+        precondition(reopened.attribute(.underlineStyle, at: reopenedRange.location, effectiveRange: nil) as? Int == 1)
+        precondition(reopened.attribute(.strikethroughStyle, at: reopenedRange.location, effectiveRange: nil) as? Int == 1)
         let text = (editor.string as NSString).range(of: "Text")
         editor.setSelectedRange(NSRange(location: text.location + 1, length: 0))
         editor.changeParagraph(.list)
@@ -59,6 +70,6 @@ struct StudioTextSmoke {
         editor.insertText("Reflektion", replacementRange: editor.selectedRange())
         editor.changeParagraph(.quote)
         precondition(StudioMarkdown.write(extended).hasSuffix("> Reflektion"))
-        print("PASS: Markdown roundtrip, rich styles, UTF-16 selections, three heading levels, quotes, list continuation and checklist state")
+        print("PASS: Markdown roundtrip, rich styles including underline and strike, UTF-16 selections, three heading levels, quotes, list continuation and checklist state")
     }
 }
