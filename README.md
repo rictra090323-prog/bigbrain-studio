@@ -17,15 +17,21 @@ Projektfilen, schemat och byggfasen har kontrollerats separat. Terminalbygget ha
 
 ## Prova Atlas och skrivläget
 
-Skriv en sökfras under **Atlas** för att få upp en dropdown med träffar direkt under sökfältet. Klicka på en träff för att förhandsvisa anteckningen, eller tryck Retur eller **Sök** för att öppna Bibliotekets träffar. Till höger visas upp till tio senast öppnade anteckningar i det aktuella biblioteket. Innan du har öppnat någon visas ett urval ur orben. Välj **Tillbaka till listan** för att återvända.
+Skriv en sökfras under **Atlas** för att visa upp till åtta träffar under sökfältet. Välj en träff för att förhandsvisa den i Atlas. Tryck Retur för att öppna träffarna i Biblioteket. Tryck Esc eller klicka utanför sökningen för att stänga listan. Till höger visas upp till tio senast öppnade anteckningar i det aktuella biblioteket. Innan du har öppnat någon visas ett urval ur orben. Klicka på en rad för att förhandsvisa anteckningen och välj **Tillbaka till listan** för att återvända.
 
-Välj **Öppna anteckningen** i Atlas eller klicka på en träff i Biblioteket. **Skriv i helskärm** (⇧⌘F) öppnar samma redigerare över hela skärmen. **Avsluta skrivläge** återställer arbetsytan med samma anteckning. Format, spara och sökning efter samband finns i skrivläget.
+Välj **Öppna i redigeraren** i Atlas eller **Redigera** i Biblioteket. Anteckningen öppnas på en egen dokumentsida. **Tillbaka** återställer föregående vy med samma val. **Helskärm** (⇧⌘F) ger dokumentet hela skärmen.
 
-Öppna en anteckning i Bibliotek och klicka i texten. I **Start** finns tre rubriknivåer, citat, fetstil, kursiv, punktlistor, numrerade listor och checklistor. Sätt markören i en checklisterad och använd knappen med en bock eller **⇧⌘↩**. Tryck **⌘F** för att söka i anteckningen och **⌘S** för att spara. Utkast lagras lokalt under arbetet.
+I **Start** finns rubriker, citat, fetstil, kursiv, understrykning, genomstrykning, punktlistor, numrerade listor och checklistor. Använd **Sök** för att hitta eller ersätta text. I **Visa** kan du öppna dokumentets rubriklista och hoppa mellan avsnitt. Tryck **⌘S** för att spara. Utkast lagras lokalt under arbetet.
 
 I **Exportera** kan du välja **PDF**, **Word** eller **Markdown**. Exporten utgår från den öppna texten, inklusive osparade ändringar. PDF sidbryts till A4 och Word skapar en redigerbar `.docx`. Båda återger formaten som stöds av den formaterade skrivytan. Markdown bevarar den fullständiga källtexten.
 
 Öppna fliken **Visa** och välj **Visa samband** efter att du markerat text eller placerat markören i ett stycke. Studio söker lokalt och visar ett utdrag och gemensamma sökord. **Koppla i Atlas** sparar anteckningen och länken tillsammans. **Ångra koppling** återställer anteckningen till texten precis före kopplingen. Exakta källutdrag och revisioner kontrolleras innan en koppling sparas.
+
+### Källor och versionshistorik
+
+Tryck **⌘K** på dokumentsidan eller välj **Källor** i verktygsraden. Sök i biblioteket, öppna en träff och granska utdragen bredvid dokumentet. **Infoga hänvisning** placerar länken vid markören eller efter markerad text. Klicka på länken i det formaterade dokumentet för att öppna det exakta utdraget från den sparade källversionen. Källversionen sparas lokalt i det aktiva bibliotekets historik. Markdown-länken pekar också på källfilen för läsare utanför BigBrain.
+
+Välj **Historik** för att se egna sparningar och godkända agentförslag. Öppna en post för att jämföra före och efter eller läsa hela versionen. **Använd som utkast** kräver att nuvarande ändringar är sparade. Funktionen ersätter det öppna utkastet och skriver en ny version först när du sparar. Historiken börjar när den här versionen av BigBrain används.
 
 ## Prova iPhone-flödet
 
@@ -63,7 +69,7 @@ Utvecklarbygget används för de automatiska bryggtesterna. Det har även stöd 
 ```sh
 ./build.sh "$PWD/BigBrain Agent Test.app"
 bridge="$PWD/BigBrain Agent Test.app/Contents/Resources/bigbrain"
-for test in smoke network_smoke word_smoke vault_isolation_smoke; do
+for test in smoke network_smoke word_smoke vault_isolation_smoke studio_sources_smoke; do
   python3 -B "Tests/$test.py" "$bridge"
 done
 python3 -B Tests/related_notes_eval.py "$bridge"
