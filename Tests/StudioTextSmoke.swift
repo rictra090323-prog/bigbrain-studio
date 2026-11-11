@@ -70,6 +70,26 @@ struct StudioTextSmoke {
         editor.insertText("Reflektion", replacementRange: editor.selectedRange())
         editor.changeParagraph(.quote)
         precondition(StudioMarkdown.write(extended).hasSuffix("> Reflektion"))
-        print("PASS: Markdown roundtrip, rich styles including underline and strike, UTF-16 selections, three heading levels, quotes, list continuation and checklist state")
+        let revision = String(repeating: "a", count: 64)
+        let citation = StudioCitation(markup: "[Källa 🍓](<../K%C3%A4llor/Original.md> \"BigBrain:\(revision):13:42\")")!
+        let referenceText = "Ett **påstående** " + citation.markup + "."
+        let formattedCitation = StudioMarkdown.read(referenceText)
+        precondition(formattedCitation.string == "Ett påstående Källa 🍓.")
+        precondition(StudioMarkdown.write(formattedCitation) == referenceText)
+        let citationLocation = (formattedCitation.string as NSString).range(of: citation.title).location
+        precondition(formattedCitation.attribute(StudioCitation.attribute, at: citationLocation, effectiveRange: nil)
+                     as? String == citation.markup)
+        editor.textStorage?.setAttributedString(StudioMarkdown.read("Ett påstående."))
+        editor.insertCitation(citation, at: ("Ett påstående" as NSString).length)
+        precondition(StudioMarkdown.write(editor.textStorage!) == "Ett påstående " + citation.markup + ".")
+        editor.changeParagraph(.quote)
+        precondition(StudioMarkdown.write(editor.textStorage!) == "> Ett påstående " + citation.markup + ".")
+        editor.textStorage?.setAttributedString(StudioMarkdown.read("En mening."))
+        editor.insertCitation(citation, at: ("En mening." as NSString).length)
+        precondition(StudioMarkdown.write(editor.textStorage!) == "En mening. " + citation.markup)
+        editor.textStorage?.setAttributedString(StudioMarkdown.read("Text\n\n## Rubrik"))
+        editor.insertCitation(citation, at: ("Text\n\n" as NSString).length)
+        precondition(StudioMarkdown.write(editor.textStorage!) == "Text\n\n## " + citation.markup + " Rubrik")
+        print("PASS: Markdown roundtrip, rich styles, UTF-16 selections, lists, checklists and citation insertion")
     }
 }

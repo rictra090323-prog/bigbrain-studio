@@ -12,6 +12,7 @@ struct StudioTextEditor: NSViewRepresentable {
     let busy: Bool
     let control: StudioEditorControl
     let onChange: (String) -> Void
+    let openCitation: (StudioCitation) -> Void
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: StudioTextEditor
@@ -23,6 +24,14 @@ struct StudioTextEditor: NSViewRepresentable {
             let output = parent.raw ? view.string : StudioMarkdown.write(storage)
             rendered = output
             parent.onChange(output)
+        }
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            guard let storage = textView.textStorage, charIndex < storage.length,
+                  let markup = storage.attribute(StudioCitation.attribute, at: charIndex, effectiveRange: nil) as? String,
+                  let citation = StudioCitation(markup: markup) else { return false }
+            parent.openCitation(citation)
+            return true
         }
     }
 
@@ -118,6 +127,9 @@ struct StudioNoteView: View {
     @LocalState private var thread: CGFloat = 0
     @LocalState private var replaceDraft = false
     @LocalState private var showOutline = false
+    @LocalState private var research: StudioResearchMode?
+    @LocalState private var researchQuery = ""
+    @LocalState private var researchFocusRequest = 0
 
     init(model: BrainModel, hit: Hit, note: Note) {
         self.model = model
@@ -137,14 +149,24 @@ struct StudioNoteView: View {
         return VStack(alignment: .leading, spacing: 9) {
             documentToolbar
             HStack(spacing: 18) {
-                if showOutline && !raw { outline }
-                StudioTextEditor(markdown: draft, raw: raw, busy: busy, control: editor, onChange: updateDraft)
+                if showOutline && !raw && research == nil { outline }
+                StudioTextEditor(markdown: draft, raw: raw, busy: busy, control: editor, onChange: updateDraft,
+                                 openCitation: { research = .citation($0) })
                     .id(raw)
                     .padding(.horizontal, 19)
                     .padding(.vertical, 14)
                     .frame(maxWidth: 840, maxHeight: .infinity)
                     .background(Color(red: 0.08, green: 0.105, blue: 0.16), in: RoundedRectangle(cornerRadius: 14))
                     .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.12)).allowsHitTesting(false) }
+                if let research {
+                    StudioResearchPanel(document: note, mode: research, query: $researchQuery, revision: baseline.revision,
+                                        focusRequest: researchFocusRequest,
+                                        setMode: { mode in
+                                            if let mode { self.research = mode } else { closeResearch() }
+                                        }, insertCitation: insertCitation,
+                                        restore: restoreVersion, findInDocument: { closeResearch(); find(.showFindInterface) },
+                                        canRestore: !dirty && !conflicting && !busy)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             if let suggestion { connection(suggestion) }
@@ -170,6 +192,7 @@ struct StudioNoteView: View {
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear(perform: restoreDraft)
+        .onChange(of: model.editorCommandRequest) { _, _ in openResearch() }
         .alert("Byt till den sparade versionen?", isPresented: $replaceDraft) {
             Button("Avbryt", role: .cancel) {}
             Button("Hämta sparad", role: .destructive) {
@@ -214,6 +237,9 @@ struct StudioNoteView: View {
                 .labelsHidden()
                 .fixedSize()
                 Spacer()
+                Button("Källor", systemImage: "text.magnifyingglass", action: openResearch)
+                    .help("Sök i biblioteket och infoga en hänvisning (⌘K)")
+                    .disabled(busy)
                 Menu {
                     Button("Sök i anteckningen") { find(.showFindInterface) }
                         .keyboardShortcut("f", modifiers: .command)
@@ -227,6 +253,44 @@ struct StudioNoteView: View {
         }
         .padding(13)
         .modifier(StudioToolbarBackground())
+    }
+
+    private func openResearch() {
+        guard !busy else { return }
+        if research == nil, let selection = editor.view?.lookupText.trimmingCharacters(in: .whitespacesAndNewlines) {
+            researchQuery = String(selection.prefix(240))
+        }
+        research = .sources
+        researchFocusRequest += 1
+    }
+
+    private func closeResearch() {
+        research = nil
+        if let view = editor.view { view.window?.makeFirstResponder(view) }
+    }
+
+    private func restoreVersion(_ body: String) {
+        guard !dirty, !conflicting, !busy else { return }
+        updateDraft(body)
+        closeResearch()
+    }
+
+    private func insertCitation(_ args: [String]) async throws {
+        guard !busy, !conflicting, let view = editor.view else {
+            throw BackendFailure(message: "Spara eller lös konflikten i dokumentet innan du lägger till hänvisningen.")
+        }
+        let savedDraft = draft
+        let position = NSMaxRange(view.selectedRange())
+        let result: StudioCitationResponse = try await Bridge.invoke(args)
+        guard research == .sources, !Task.isCancelled, !busy, !conflicting,
+              draft == savedDraft, editor.view === view else {
+            throw BackendFailure(message: "Dokumentet ändrades. Välj utdraget igen för att infoga hänvisningen.")
+        }
+        guard let citation = StudioCitation(markup: result.markdown) else {
+            throw BackendFailure(message: "Hänvisningen kunde inte läsas.")
+        }
+        view.insertCitation(citation, at: position)
+        research = .citation(citation)
     }
 
     private func find(_ action: NSTextFinder.Action) {
@@ -359,8 +423,10 @@ struct StudioNoteView: View {
                 }
                 .disabled(busy || searching).help("Utgår från markerad text eller stycket där du skriver")
                 Button(showOutline ? "Dölj rubriker" : "Visa rubriker", systemImage: "list.bullet.indent") {
+                    research = nil
                     showOutline.toggle()
                 }.disabled(raw)
+                Button("Versionshistorik", systemImage: "clock.arrow.circlepath") { research = .history }
             }
             Spacer(minLength: 0)
         }
@@ -533,5 +599,365 @@ private struct StudioToolbarBackground: ViewModifier {
         } else {
             content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 17))
         }
+    }
+}
+
+
+private enum StudioResearchMode: Equatable {
+    case sources
+    case history
+    case citation(StudioCitation)
+}
+
+private struct StudioPassage: Decodable, Identifiable {
+    let start: Int
+    let length: Int
+    let text: String
+    var id: Int { start }
+}
+
+private struct StudioSourcePreview: Decodable {
+    let revision: String
+    let passages: [StudioPassage]
+}
+
+private struct StudioCitationResponse: Decodable {
+    let markdown: String
+}
+
+private struct StudioArchivedSource: Decodable {
+    let path: String
+    let revision: String
+    let body: String
+    let excerpt: String
+}
+
+private struct StudioHistoryEvent: Decodable, Identifiable {
+    let id: Int
+    let author: String
+    let saved: String
+    let reason: String
+
+    var authorLabel: String {
+        switch author {
+        case "writer": "Egen ändring"
+        case "agent": "Godkänt agentförslag"
+        default: "Godkänt ändringsförslag"
+        }
+    }
+
+    var dateLabel: String {
+        (try? Date.ISO8601FormatStyle().parse(saved))?
+            .formatted(date: .abbreviated, time: .shortened) ?? saved
+    }
+}
+
+private struct StudioHistoryDetail: Decodable {
+    let body: String
+    let before: String?
+    let diff: String
+}
+
+private struct StudioResearchPanel: View {
+    let document: Note
+    let mode: StudioResearchMode
+    @Binding var query: String
+    let revision: String
+    let focusRequest: Int
+    let setMode: (StudioResearchMode?) -> Void
+    let insertCitation: ([String]) async throws -> Void
+    let restore: (String) -> Void
+    let findInDocument: () -> Void
+    let canRestore: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Källor och versioner").font(.headline).accessibilityAddTraits(.isHeader)
+                Spacer()
+                Button("Stäng", systemImage: "xmark") { setMode(nil) }
+                    .labelStyle(.iconOnly).buttonStyle(.plain)
+            }
+            HStack {
+                Button("Källor", systemImage: "text.magnifyingglass") { setMode(.sources) }
+                Button("Historik", systemImage: "clock.arrow.circlepath") { setMode(.history) }
+                Button("Sök i text", systemImage: "magnifyingglass", action: findInDocument)
+            }
+            Divider()
+            switch mode {
+            case .sources:
+                StudioSourcesView(document: document, query: $query, focusRequest: focusRequest, insertCitation: insertCitation)
+            case .history:
+                StudioHistoryView(document: document, revision: revision, restore: restore, canRestore: canRestore)
+            case .citation(let citation):
+                StudioArchiveView(document: document, citation: citation)
+            }
+        }
+        .padding(14)
+        .frame(width: 345)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 14))
+        .onKeyPress(.escape) { setMode(nil); return .handled }
+    }
+}
+
+private struct StudioSourcesView: View {
+    let document: Note
+    @Binding var query: String
+    let focusRequest: Int
+    let insertCitation: ([String]) async throws -> Void
+    @LocalState private var results: [Hit] = []
+    @LocalState private var resultTerm: String?
+    @LocalState private var selected: Hit?
+    @LocalState private var preview: StudioSourcePreview?
+    @LocalState private var error = ""
+    @LocalState private var inserting = false
+    @FocusState private var queryFocused: Bool
+
+    private var term: String { String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240)) }
+
+    var body: some View {
+        let queryTerm = term
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Sök i biblioteket", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .focused($queryFocused)
+                .onAppear { queryFocused = true }
+                .onChange(of: focusRequest) { _, _ in queryFocused = true }
+                .onSubmit {
+                    if let first = results.first, resultTerm == queryTerm { select(first) }
+                }
+            if !error.isEmpty { Text(error).font(.callout).foregroundStyle(.orange) }
+            if let selected {
+                Button("Tillbaka till träffarna", systemImage: "chevron.left") { self.selected = nil }
+                    .buttonStyle(.plain)
+                Text(selected.title).font(.title3.weight(.semibold))
+                Text(selected.path).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                if let preview {
+                    if preview.passages.isEmpty {
+                        Text("Källan innehåller ingen text.").foregroundStyle(.secondary)
+                    }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(preview.passages) { passage in
+                                VStack(alignment: .leading, spacing: 7) {
+                                    Text(passage.text).textSelection(.enabled)
+                                    Button("Infoga hänvisning", systemImage: "link") { insert(selected, preview, passage) }
+                                        .disabled(inserting)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 9))
+                            }
+                        }
+                    }
+                } else if error.isEmpty {
+                    ProgressView().controlSize(.small)
+                }
+            } else if queryTerm.isEmpty {
+                Text("Sök efter ett ämne eller en källtitel.").foregroundStyle(.secondary)
+            } else if resultTerm != queryTerm && error.isEmpty {
+                ProgressView().controlSize(.small)
+            } else if results.isEmpty && error.isEmpty {
+                Text("Inga källor hittades.").foregroundStyle(.secondary)
+            } else if resultTerm == queryTerm {
+                ScrollView {
+                    VStack(spacing: 5) {
+                        ForEach(results) { hit in
+                            Button { select(hit) } label: { HitCell(hit: hit, active: false) }.buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .task(id: queryTerm) { await search(queryTerm) }
+        .task(id: selected?.id) {
+            if let hit = selected { await load(hit, queryTerm) }
+        }
+        .onChange(of: queryTerm) { _, _ in selected = nil }
+    }
+
+    private func select(_ hit: Hit) {
+        guard selected?.id != hit.id else { return }
+        error = ""
+        preview = nil
+        selected = hit
+    }
+
+    private func search(_ queryTerm: String) async {
+        error = ""
+        guard !queryTerm.isEmpty else { return }
+        do {
+            try await Task.sleep(for: .milliseconds(220))
+            let hits: [Hit] = try await Bridge.invoke(arguments("source-search") + [queryTerm])
+            guard !Task.isCancelled, term == queryTerm else { return }
+            results = hits
+            resultTerm = queryTerm
+        } catch {
+            guard !Task.isCancelled, term == queryTerm else { return }
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func load(_ hit: Hit, _ queryTerm: String) async {
+        do {
+            let result: StudioSourcePreview = try await Bridge.invoke(arguments("source-preview") + [hit.path, hit.file, queryTerm])
+            guard !Task.isCancelled, selected?.id == hit.id, term == queryTerm else { return }
+            preview = result
+        } catch {
+            guard !Task.isCancelled, selected?.id == hit.id, term == queryTerm else { return }
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func insert(_ hit: Hit, _ preview: StudioSourcePreview, _ passage: StudioPassage) {
+        inserting = true
+        error = ""
+        Task {
+            defer { inserting = false }
+            do {
+                try await insertCitation(arguments("source-cite") + [hit.path, hit.file, preview.revision,
+                                                                     String(passage.start), String(passage.length)])
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func arguments(_ command: String) -> [String] {
+        [command, "--expected-file=" + document.file, "--", document.path]
+    }
+}
+
+private struct StudioArchiveView: View {
+    let document: Note
+    let citation: StudioCitation
+    @LocalState private var source: StudioArchivedSource?
+    @LocalState private var error = ""
+    @LocalState private var fullText = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(citation.title).font(.title3.weight(.semibold))
+            if let source {
+                Text(source.path).font(.caption).foregroundStyle(.secondary)
+                Label("Sparad källversion · \(source.revision.prefix(10))", systemImage: "checkmark.seal")
+                    .font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    Text(fullText ? source.body : source.excerpt)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                Button(fullText ? "Visa utdraget" : "Läs hela källversionen") { fullText.toggle() }
+            } else if !error.isEmpty {
+                Text(error).foregroundStyle(.orange)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .task(id: citation) {
+            source = nil
+            error = ""
+            fullText = false
+            do {
+                let args = ["source-version", "--expected-file=" + document.file, "--", document.path,
+                            citation.relativePath, citation.revision, String(citation.start), String(citation.length)]
+                let result: StudioArchivedSource = try await Bridge.invoke(args)
+                if !Task.isCancelled { source = result }
+            } catch {
+                if !Task.isCancelled { self.error = error.localizedDescription }
+            }
+        }
+    }
+}
+
+private struct StudioHistoryView: View {
+    let document: Note
+    let revision: String
+    let restore: (String) -> Void
+    let canRestore: Bool
+    @LocalState private var events: [StudioHistoryEvent]?
+    @LocalState private var selection: StudioHistoryEvent?
+    @LocalState private var detail: StudioHistoryDetail?
+    @LocalState private var error = ""
+    @LocalState private var showVersion = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            if let selection {
+                Button("Tillbaka till historiken", systemImage: "chevron.left") { self.selection = nil; error = "" }
+                    .buttonStyle(.plain)
+                Text(selection.authorLabel).font(.headline)
+                Text(selection.dateLabel).font(.caption).foregroundStyle(.secondary)
+                if let detail {
+                    ScrollView {
+                        Text(showVersion ? detail.body : detail.diff)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    Button(showVersion ? "Visa ändringar" : "Visa hela versionen") { showVersion.toggle() }
+                    Button("Använd som utkast") { restore(detail.body) }
+                        .disabled(!canRestore || detail.body.isEmpty)
+                    if let before = detail.before, !before.isEmpty {
+                        Button("Använd föregående text som utkast") { restore(before) }.disabled(!canRestore)
+                    }
+                } else if error.isEmpty {
+                    ProgressView().controlSize(.small)
+                }
+            } else if let events {
+                if events.isEmpty {
+                    Text("Sparningar och godkända förslag visas här.").foregroundStyle(.secondary)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 7) {
+                            ForEach(events) { event in
+                                Button {
+                                    detail = nil
+                                    error = ""
+                                    showVersion = false
+                                    selection = event
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(event.authorLabel).font(.callout.weight(.semibold))
+                                        Text(event.dateLabel).font(.caption).foregroundStyle(.secondary)
+                                        if !event.reason.isEmpty {
+                                            Text(event.reason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                                }.buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            } else if error.isEmpty {
+                ProgressView().controlSize(.small)
+            }
+            if !error.isEmpty { Text(error).foregroundStyle(.orange) }
+        }
+        .task(id: revision) {
+            do {
+                let result: [StudioHistoryEvent] = try await Bridge.invoke(arguments("note-history"))
+                if !Task.isCancelled { events = result }
+            } catch {
+                if !Task.isCancelled { self.error = error.localizedDescription }
+            }
+        }
+        .task(id: selection?.id) {
+            guard let event = selection else { return }
+            do {
+                let result: StudioHistoryDetail = try await Bridge.invoke(arguments("history-entry") + [String(event.id)])
+                if !Task.isCancelled, selection?.id == event.id { detail = result }
+            } catch {
+                if !Task.isCancelled, selection?.id == event.id { self.error = error.localizedDescription }
+            }
+        }
+    }
+
+    private func arguments(_ command: String) -> [String] {
+        [command, "--expected-file=" + document.file, "--", document.path]
     }
 }

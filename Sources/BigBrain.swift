@@ -164,6 +164,7 @@ final class BrainModel: ObservableObject {
     @Published var note: Note?
     @Published var reply: AgentReply?
     @Published private(set) var editorHit: Hit?
+    @Published private(set) var editorCommandRequest = 0
     @Published var showingCapture = false
     @Published var showingTranscription = false
     @Published var error: String?
@@ -585,6 +586,14 @@ final class BrainModel: ObservableObject {
               let note, note.path == hit.path else { return }
         dismissAtlasSearch()
         editorHit = hit
+    }
+
+    func openSearchCommand() {
+        if editorHit == nil {
+            show(.search)
+        } else {
+            editorCommandRequest += 1
+        }
     }
 
     func closeEditor() {
@@ -1871,8 +1880,8 @@ struct BigBrainApp: App {
                 CommandGroup(replacing: .newItem) {
                     Button("Fånga snabbt") { model.showingCapture = true }.keyboardShortcut("n", modifiers: .command)
                         .disabled(model.editorHit != nil)
-                    Button("Sök i biblioteket") { model.show(.search) }.keyboardShortcut("k", modifiers: .command)
-                        .disabled(model.editorHit != nil)
+                    Button(model.editorHit == nil ? "Sök i biblioteket" : "Sök källor och kommandon",
+                           action: model.openSearchCommand).keyboardShortcut("k", modifiers: .command)
                 }
                 CommandGroup(after: .importExport) {
                     Button("Importera från iPhone…") { model.choosePhoneCapture() }.disabled(model.importing || model.editorHit != nil)

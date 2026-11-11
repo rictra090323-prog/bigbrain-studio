@@ -188,6 +188,19 @@ def connect(readonly=False):
             PRIMARY KEY (library, a, b)
         );
         CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS note_versions (
+            vault TEXT NOT NULL, path TEXT NOT NULL, revision TEXT NOT NULL, body TEXT NOT NULL,
+            PRIMARY KEY (vault, path, revision)
+        );
+        CREATE TABLE IF NOT EXISTS proposal_authors (
+            id TEXT PRIMARY KEY, author TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS note_history (
+            id INTEGER PRIMARY KEY, proposal TEXT NOT NULL UNIQUE,
+            vault TEXT NOT NULL, path TEXT NOT NULL, revision TEXT NOT NULL, previous TEXT NOT NULL,
+            author TEXT NOT NULL, saved TEXT NOT NULL, reason TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS note_history_path ON note_history (vault, path, id DESC);
     """)
     return conn
 
@@ -450,8 +463,11 @@ def search(query, limit=8, scope="all", semantic=True, *, config=None):
     terms += ['"' + normalized(v) + '"' for group in SYNONYMS if any(
         re.search(r"\b" + re.escape(normalized(v)) + r"\b", normalized_query) for v in group
     ) for v in group]
-    args = [] if scope == "all" else [scope]
-    scope_filter = "" if scope == "all" else " AND f.kind IN (?, 'reference')" if scope == "note" else " AND f.kind=?"
+    args = [] if scope in ("all", "sources") else [scope]
+    if scope == "sources":
+        scope_filter = " AND f.kind IN ('note', 'inbox') AND f.path NOT LIKE 'Codex Skills/%'"
+    else:
+        scope_filter = "" if scope == "all" else " AND f.kind IN (?, 'reference')" if scope == "note" else " AND f.kind=?"
     with scoped_index(config) as conn:
         if conn is None:
             return []
@@ -580,7 +596,7 @@ def import_phone_capture(data):
     return {"note": note, "title": title_for(target, note["body"], "note"), "created": created}
 
 
-def proposal(path, baseline, replacement, reason, source="", *, link_revision=None, vault=None, exact=False):
+def proposal(path, baseline, replacement, reason, source="", *, link_revision=None, vault=None, exact=False, author=None):
     path = allowed_relative(path).as_posix()
     vault = vault or vault_root()
     target = note_path(path, vault)
@@ -599,6 +615,8 @@ def proposal(path, baseline, replacement, reason, source="", *, link_revision=No
     with connect() as conn:
         conn.execute("INSERT INTO proposals VALUES (?,?,?,?,?,?,?,?,?)",
                      (key, str(vault), path, baseline, replacement, reason[:2000], source[:300], stamp(), "pending"))
+        if author is not None:
+            conn.execute("INSERT INTO proposal_authors VALUES (?,?)", (key, author))
         if link_revision is not None:
             conn.execute("INSERT INTO proposal_links VALUES (?,?,?)", (key, source, link_revision))
     return proposal_detail(key, vault=vault)
@@ -663,8 +681,20 @@ def resolve_proposal(key, accept):
                     raise ValueError("Texten har ändrats i biblioteket. Skapa ett nytt förslag från den aktuella versionen.")
                 if proposal_link_conflict(data, Path(data["vault"])):
                     raise ValueError("Källanteckningen har ändrats, flyttats eller tagits bort. Skapa ett nytt länkförslag.")
+                if current:
+                    with connect() as conn:
+                        save_note_version(conn, data["vault"], current["path"], current["revision"], current["body"])
                 atomic_text(target, data["replacement"])
         with connect() as conn:
+            if accept:
+                revision = digest(data["replacement"])
+                save_note_version(conn, data["vault"], data["path"], revision, data["replacement"])
+                author = conn.execute("SELECT author FROM proposal_authors WHERE id=?", (key,)).fetchone()
+                conn.execute(
+                    "INSERT OR IGNORE INTO note_history "
+                    "(proposal,vault,path,revision,previous,author,saved,reason) VALUES (?,?,?,?,?,?,?,?)",
+                    (key, data["vault"], data["path"], revision, data["baseline"],
+                     author["author"] if author else "proposal", stamp(), data["reason"]))
             conn.execute("UPDATE proposals SET status=? WHERE id=?", ("accepted" if accept else "dismissed", key))
     if accept:
         refresh(force=True)
@@ -847,6 +877,114 @@ def linkable_note(path, root=None):
     return note
 
 
+def save_note_version(conn, vault, path, revision, body):
+    conn.execute("INSERT OR IGNORE INTO note_versions VALUES (?,?,?,?)",
+                 (str(vault), path, revision, body))
+
+
+def writing_document(path, expected_file, vault):
+    path = allowed_relative(path).as_posix()
+    if path.startswith(("Codex Skills/", INBOX + "/")) or str(note_path(path, vault)) != expected_file:
+        raise ValueError("Biblioteket har bytts. Öppna dokumentet igen.")
+    return path
+
+
+def writing_source(path, expected_file, vault):
+    path = allowed_relative(path).as_posix()
+    if path.startswith("Codex Skills/") or str(note_path(path, vault)) != expected_file:
+        raise ValueError("Källan finns inte i det öppna biblioteket.")
+    return read_note(path, vault)
+
+
+MAX_PASSAGE = 380
+
+
+def source_passages(body, query):
+    terms = set(re.findall(r"[^\W_]+", normalized(query[:700]))) - STOPWORDS
+    ranked = []
+    for line in re.finditer(r"[^\n]+", body):
+        raw = line[0]
+        is_heading = raw.lstrip().startswith("#")
+        for offset in range(0, len(raw), 300):
+            window = raw[offset:offset + MAX_PASSAGE]
+            excerpt = window.strip()
+            if not excerpt:
+                continue
+            start = line.start() + offset + len(window) - len(window.lstrip())
+            words = set(re.findall(r"[^\W_]+", normalized(excerpt)))
+            score = len(terms & words)
+            ranked.append((-score, is_heading, start, excerpt))
+    ranked.sort(key=lambda item: item[:3])
+    return [{"start": start, "length": len(excerpt), "text": excerpt}
+            for _, _, start, excerpt in ranked[:4]]
+
+
+def checked_passage(body, start, length):
+    if not 0 <= start < len(body) or not 0 < length <= MAX_PASSAGE or start + length > len(body):
+        raise ValueError("Utdraget finns inte i den här källversionen.")
+    return body[start:start + length]
+
+
+def cite_source(document, source, expected_revision, start, length, vault):
+    if document == source["path"]:
+        raise ValueError("Välj en annan anteckning som källa.")
+    if source["revision"] != expected_revision:
+        raise ValueError("Källan har ändrats. Öppna källan igen och välj utdraget på nytt.")
+    checked_passage(source["body"], start, length)
+    with connect() as conn:
+        save_note_version(conn, vault, source["path"], source["revision"], source["body"])
+    relative = posixpath.relpath(source["path"], Path(document).parent.as_posix())
+    if not relative.startswith("../"):
+        relative = "./" + relative
+    title = title_for(Path(source["path"]), source["body"], "note") or Path(source["path"]).stem
+    title = " ".join(title.split()).translate(str.maketrans({"[": "(", "]": ")", chr(92): "/"}))
+    revision = source["revision"]
+    return {"markdown": f'[{title}](<{quote(relative)}>' + f' "BigBrain:{revision}:{start}:{length}")'}
+
+
+def version_body(conn, vault, path, revision, *, required=True):
+    row = conn.execute("SELECT body FROM note_versions WHERE vault=? AND path=? AND revision=?",
+                       (str(vault), path, revision)).fetchone()
+    if not row:
+        if required:
+            raise ValueError("Den sparade versionen finns inte i det här biblioteket.")
+        return None
+    if digest(row["body"]) != revision:
+        raise ValueError("Den sparade versionens kontrollsumma stämmer inte.")
+    return row["body"]
+
+
+def archived_source(document, relative, revision, start, length, vault):
+    if not relative.startswith(("./", "../")):
+        raise ValueError("Källhänvisningen har en ogiltig sökväg.")
+    path = allowed_relative(posixpath.normpath(posixpath.join(posixpath.dirname(document), unquote(relative)))).as_posix()
+    if path.startswith("Codex Skills/"):
+        raise ValueError("Källan finns inte i det öppna biblioteket.")
+    with connect() as conn:
+        body = version_body(conn, vault, path, revision)
+    return {"path": path, "revision": revision, "body": body, "excerpt": checked_passage(body, start, length)}
+
+
+def history_for(path, vault):
+    with connect() as conn:
+        return [dict(row) for row in conn.execute(
+            "SELECT id,revision,author,saved,reason FROM note_history WHERE vault=? AND path=? "
+            "ORDER BY id DESC LIMIT 60", (str(vault), path))]
+
+
+def history_entry(path, event, vault):
+    with connect() as conn:
+        row = conn.execute("SELECT revision,previous FROM note_history WHERE id=? AND vault=? AND path=?",
+                           (event, str(vault), path)).fetchone()
+        if not row:
+            raise ValueError("Ändringen finns inte i det här biblioteket.")
+        body = version_body(conn, vault, path, row["revision"])
+        before = "" if row["previous"] == "new" else version_body(conn, vault, path, row["previous"], required=False)
+    diff = "Föregående version saknas." if before is None else "".join(
+        difflib.unified_diff(before.splitlines(True), body.splitlines(True), fromfile="Före", tofile="Efter", n=3))
+    return {"body": body, "before": before, "diff": diff[:100_000]}
+
+
 def related_notes(path):
     config = settings()
     note = linkable_note(path, vault_root(config))
@@ -914,7 +1052,8 @@ def propose_link(path, revision, target_path, *, target_revision=None, draft=Non
         prefix = body.rstrip() if draft is None else body
         replacement = prefix + ("\n" if not prefix.endswith("\n") else "") + heading + line + "\n"
     return proposal(note["path"], revision, replacement, "Lägg till vald anteckning: " + title,
-                    target["path"], link_revision=target["revision"], vault=vault, exact=draft is not None)
+                    target["path"], link_revision=target["revision"], vault=vault, exact=draft is not None,
+                    author="writer")
 
 
 def legacy_link_is_shadowed(vault, path, target):
@@ -1021,7 +1160,7 @@ def finish_agent(prepared, reply):
         if base:
             try:
                 change = proposal(path, base, answer["replacement"], answer.get("reason") or answer["answer"], source_path,
-                                  vault=vault)
+                                  vault=vault, author="agent")
                 answer["proposal"] = change["id"]
             except (OSError, ValueError) as error:
                 answer["answer"] += "\n\nFörslaget kunde inte köas. " + str(error)
@@ -1375,6 +1514,23 @@ def main():
     cmd.add_argument("target")
     cmd.add_argument("target_revision")
     cmd.add_argument("--expected-file", required=True)
+    for name in ("source-search", "source-preview", "source-cite", "source-version", "note-history", "history-entry"):
+        cmd = commands.add_parser(name)
+        cmd.add_argument("--expected-file", required=True)
+        cmd.add_argument("document")
+        if name in ("source-preview", "source-cite"):
+            cmd.add_argument("source")
+            cmd.add_argument("source_file")
+        if name in ("source-search", "source-preview"):
+            cmd.add_argument("query")
+        if name == "source-version":
+            cmd.add_argument("relative")
+        if name in ("source-cite", "source-version"):
+            cmd.add_argument("revision")
+            cmd.add_argument("start", type=int)
+            cmd.add_argument("length", type=int)
+        if name == "history-entry":
+            cmd.add_argument("event", type=int)
     args = parser.parse_args()
     DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
     action = args.command
@@ -1400,9 +1556,26 @@ def main():
             if note["revision"] == args.revision and note["body"] == body:
                 return note
         change = proposal(args.path, args.revision, body, "Sparad av användaren i BigBrain",
-                          vault=vault, exact=args.expected_file is not None)
+                          vault=vault, exact=args.expected_file is not None, author="writer")
         resolve_proposal(change["id"], True)
         return read_note(args.path, vault)
+    if action in ("source-search", "source-preview", "source-cite", "source-version", "note-history", "history-entry"):
+        config = settings()
+        vault = vault_root(config)
+        document = writing_document(args.document, args.expected_file, vault)
+        if action == "source-search":
+            return [hit for hit in search(args.query, 15, "sources", False, config=config) if hit["path"] != document]
+        if action == "source-preview":
+            source = writing_source(args.source, args.source_file, vault)
+            return {"revision": source["revision"], "passages": source_passages(source["body"], args.query)}
+        if action == "source-cite":
+            source = writing_source(args.source, args.source_file, vault)
+            return cite_source(document, source, args.revision, args.start, args.length, vault)
+        if action == "source-version":
+            return archived_source(document, args.relative, args.revision, args.start, args.length, vault)
+        if action == "note-history":
+            return history_for(document, vault)
+        return history_entry(document, args.event, vault)
     if action == "search":
         hits = search(args.query, args.limit, "skill" if args.scope == "skills" else args.scope, not args.fast)
         if args.compact:

@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlsplit
 
 FENCES = re.compile(r"^[ \t]*(?:```|~~~).*?$.*?^[ \t]*(?:```|~~~)[ \t]*$", re.M | re.S)
 WIKI_LINK = re.compile(r"(?<!!)\[\[([^\]\n]+)\]\]")
-MD_LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(\s*(?:<([^>\n]+)>|([^()\n]+?))\s*\)")
+MD_LINK = re.compile(r'(?<!!)\[[^\]\n]+\]\(\s*(?:<([^>\n]+)>(?:\s+"BigBrain:[a-f0-9]{64}:[0-9]+:[0-9]+")?|([^()\n]+?))\s*\)')
 HALF_LIFE = 30 * 86400
 
 

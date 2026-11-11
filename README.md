@@ -27,6 +27,12 @@ I **Exportera** kan du välja **PDF**, **Word** eller **Markdown**. Exporten utg
 
 Öppna fliken **Visa** och välj **Visa samband** efter att du markerat text eller placerat markören i ett stycke. Studio söker lokalt och visar ett utdrag och gemensamma sökord. **Koppla i Atlas** sparar anteckningen och länken tillsammans. **Ångra koppling** återställer anteckningen till texten precis före kopplingen. Exakta källutdrag och revisioner kontrolleras innan en koppling sparas.
 
+### Källor och versionshistorik
+
+Tryck **⌘K** på dokumentsidan eller välj **Källor** i verktygsraden. Sök i biblioteket, öppna en träff och granska utdragen bredvid dokumentet. **Infoga hänvisning** placerar länken vid markören eller efter markerad text. Klicka på länken i det formaterade dokumentet för att öppna det exakta utdraget från den sparade källversionen. Källversionen sparas lokalt i det aktiva bibliotekets historik. Markdown-länken pekar också på källfilen för läsare utanför BigBrain.
+
+Välj **Historik** för att se egna sparningar och godkända agentförslag. Öppna en post för att jämföra före och efter eller läsa hela versionen. **Använd som utkast** kräver att nuvarande ändringar är sparade. Funktionen ersätter det öppna utkastet och skriver en ny version först när du sparar. Historiken börjar när den här versionen av BigBrain används.
+
 ## Prova iPhone-flödet
 
 1. Välj schemat **BigBrain Capture** i samma Xcode-projekt och en iPhone som kör iOS 17 eller senare. För en fysisk telefon väljer du ditt utvecklarteam under **Signing & Capabilities**. Ändra app-ID om ditt team redan använder det. iPhone-målet använder Swift och behöver inget Python-arkiv.
@@ -63,7 +69,7 @@ Utvecklarbygget används för de automatiska bryggtesterna. Det har även stöd 
 ```sh
 ./build.sh "$PWD/BigBrain Agent Test.app"
 bridge="$PWD/BigBrain Agent Test.app/Contents/Resources/bigbrain"
-for test in smoke network_smoke word_smoke vault_isolation_smoke; do
+for test in smoke network_smoke word_smoke vault_isolation_smoke studio_sources_smoke; do
   python3 -B "Tests/$test.py" "$bridge"
 done
 python3 -B Tests/related_notes_eval.py "$bridge"

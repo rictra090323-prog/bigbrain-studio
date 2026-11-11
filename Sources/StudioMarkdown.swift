@@ -47,6 +47,42 @@ enum StudioParagraph: String, CaseIterable {
     }
 }
 
+struct StudioCitation: Equatable {
+    static let attribute = NSAttributedString.Key("BigBrainCitation")
+    static let pattern = try! NSRegularExpression(
+        pattern: #"\[([^\[\]\n]+)\]\(<([^<>\s]+)> "BigBrain:([a-f0-9]{64}):([0-9]+):([0-9]+)"\)"#)
+    let markup: String
+    let title: String
+    let relativePath: String
+    let revision: String
+    let start: Int
+    let length: Int
+
+    init?(markup: String) {
+        let string = markup as NSString
+        let entire = NSRange(location: 0, length: string.length)
+        guard let match = Self.pattern.firstMatch(in: markup, range: entire), match.range == entire,
+              let start = Int(string.substring(with: match.range(at: 4))),
+              let length = Int(string.substring(with: match.range(at: 5))),
+              length > 0 else { return nil }
+        let path = string.substring(with: match.range(at: 2))
+        guard path.hasPrefix("./") || path.hasPrefix("../") else { return nil }
+        self.markup = markup
+        title = string.substring(with: match.range(at: 1))
+        relativePath = path
+        revision = string.substring(with: match.range(at: 3))
+        self.start = start
+        self.length = length
+    }
+
+    func attributed(paragraph: StudioParagraph) -> NSAttributedString {
+        var attributes = StudioMarkdown.style(paragraph)
+        attributes[Self.attribute] = markup
+        attributes[.link] = relativePath
+        return NSAttributedString(string: title, attributes: attributes)
+    }
+}
+
 enum StudioMarkdown {
     static let block = NSAttributedString.Key("BigBrainParagraph")
     static let emphasis = NSAttributedString.Key("BigBrainEmphasis")
@@ -93,8 +129,11 @@ enum StudioMarkdown {
             if (index == 0 && trimmed == "---") || (frontMatter && trimmed == "---") { frontMatter.toggle() }
             let taskMarker = ["- [ ] ", "- [x] "].first(where: line.hasPrefix)
             let inlineSource = taskMarker.map { line.dropFirst($0.count) } ?? line.dropFirst(line.hasPrefix("> ") ? 2 : 0)
-            let markup = inlineSource.replacingOccurrences(of: "<u>", with: "").replacingOccurrences(of: "</u>", with: "")
-            let literal = frontMatter || fence != nil || marker != nil || markup.contains { "[]<>_|`\\".contains($0) }
+            let inlineMarkup = inlineSource.replacingOccurrences(of: "<u>", with: "").replacingOccurrences(of: "</u>", with: "")
+            let markup = StudioCitation.pattern.stringByReplacingMatches(in: inlineMarkup,
+                range: NSRange(location: 0, length: (inlineMarkup as NSString).length), withTemplate: "")
+            let code = frontMatter || fence != nil || marker != nil
+            let literal = code || markup.contains { "[]<>_|`\\".contains($0) }
             if let marker, fence == nil { fence = marker }
             else if marker == fence && marker != nil { fence = nil }
             let kind: StudioParagraph
@@ -112,13 +151,33 @@ enum StudioMarkdown {
                 } ?? .text
                 content = String(line.dropFirst(kind.prefix.count))
             }
-            if literal {
+            if code {
                 result.append(NSAttributedString(string: content, attributes: style(kind)))
             } else {
-                appendInline(content, paragraph: kind, to: result)
+                appendCitations(content, paragraph: kind, literal: literal, to: result)
             }
         }
         return write(result) == source ? result : NSAttributedString(string: source, attributes: style())
+    }
+
+    private static func appendCitations(_ content: String, paragraph: StudioParagraph, literal: Bool,
+                                        to result: NSMutableAttributedString) {
+        let string = content as NSString
+        var start = 0
+        func appendText(_ text: String) {
+            if literal {
+                result.append(NSAttributedString(string: text, attributes: style(paragraph)))
+            } else {
+                appendInline(text, paragraph: paragraph, to: result)
+            }
+        }
+        for match in StudioCitation.pattern.matches(in: content, range: NSRange(location: 0, length: string.length)) {
+            guard let citation = StudioCitation(markup: string.substring(with: match.range)) else { continue }
+            appendText(string.substring(with: NSRange(location: start, length: match.range.location - start)))
+            result.append(citation.attributed(paragraph: paragraph))
+            start = NSMaxRange(match.range)
+        }
+        appendText(string.substring(from: start))
     }
 
     private static func appendInline(_ content: String, paragraph: StudioParagraph, marks: Int = 0,
@@ -154,19 +213,27 @@ enum StudioMarkdown {
             let markerLength = (marker as NSString).length
             var result = kind.prefix + marker
             if kind == .checklist && !marker.isEmpty { result = marker == "☑ " ? "- [x] " : "- [ ] " }
-            text.enumerateAttribute(emphasis, in: NSRange(location: offset + markerLength, length: length - markerLength)) { value, range, _ in
-                let content = whole.substring(with: range)
-                let marks = value as? Int ?? 0
-                let stars = String(repeating: "*", count: (marks & bold == 0 ? 0 : 2) + (marks & italic == 0 ? 0 : 1))
-                let u = marks & underline == 0 ? "" : "<u>"
-                let endU = marks & underline == 0 ? "" : "</u>"
-                let strike = marks & Self.strike == 0 ? "" : "~~"
-                let trimmed = content.trimmingCharacters(in: .whitespaces)
-                guard marks != 0, !trimmed.isEmpty, let inner = content.range(of: trimmed) else {
-                    result += content
+            let contentRange = NSRange(location: offset + markerLength, length: length - markerLength)
+            text.enumerateAttribute(StudioCitation.attribute, in: contentRange) { value, citationRange, _ in
+                if let markup = value as? String, let citation = StudioCitation(markup: markup),
+                   whole.substring(with: citationRange) == citation.title {
+                    result += markup
                     return
                 }
-                result += content[..<inner.lowerBound] + strike + u + stars + trimmed + stars + endU + strike + content[inner.upperBound...]
+                text.enumerateAttribute(emphasis, in: citationRange) { value, range, _ in
+                    let content = whole.substring(with: range)
+                    let marks = value as? Int ?? 0
+                    let stars = String(repeating: "*", count: (marks & bold == 0 ? 0 : 2) + (marks & italic == 0 ? 0 : 1))
+                    let u = marks & underline == 0 ? "" : "<u>"
+                    let endU = marks & underline == 0 ? "" : "</u>"
+                    let strike = marks & Self.strike == 0 ? "" : "~~"
+                    let trimmed = content.trimmingCharacters(in: .whitespaces)
+                    guard marks != 0, !trimmed.isEmpty, let inner = content.range(of: trimmed) else {
+                        result += content
+                        return
+                    }
+                    result += content[..<inner.lowerBound] + strike + u + stars + trimmed + stars + endU + strike + content[inner.upperBound...]
+                }
             }
             return result
         }.joined(separator: "\n")
@@ -224,8 +291,11 @@ final class StudioTextView: NSTextView {
         replacement.replaceCharacters(in: NSRange(location: 0, length: (oldMarker as NSString).length),
                                       with: NSAttributedString(string: newMarker, attributes: StudioMarkdown.style(kind)))
         let formatted = NSRange(location: 0, length: replacement.length)
-        replacement.enumerateAttribute(StudioMarkdown.emphasis, in: formatted) { mark, span, _ in
-            replacement.setAttributes(StudioMarkdown.style(kind, mark as? Int ?? 0), range: span)
+        replacement.enumerateAttributes(in: formatted) { attributes, span, _ in
+            var style = StudioMarkdown.style(kind, attributes[StudioMarkdown.emphasis] as? Int ?? 0)
+            style[StudioCitation.attribute] = attributes[StudioCitation.attribute]
+            style[.link] = attributes[.link]
+            replacement.setAttributes(style, range: span)
         }
         let next = NSMutableAttributedString(attributedString: storage)
         next.replaceCharacters(in: range, with: replacement)
@@ -260,6 +330,7 @@ final class StudioTextView: NSTextView {
                 allMarked = allMarked && ((value as? Int ?? 0) & flag != 0)
             }
             storage.enumerateAttributes(in: range) { attributes, part, _ in
+                guard attributes[StudioCitation.attribute] == nil else { return }
                 let kind = StudioMarkdown.paragraph(attributes[StudioMarkdown.block])
                 let marks = attributes[StudioMarkdown.emphasis] as? Int ?? 0
                 next.setAttributes(StudioMarkdown.style(kind, allMarked ? marks & ~flag : marks | flag), range: part)
@@ -267,6 +338,35 @@ final class StudioTextView: NSTextView {
             replace(next, selection: range)
         }
         window?.makeFirstResponder(self)
+    }
+
+    func insertCitation(_ citation: StudioCitation, at offset: Int) {
+        guard let storage = textStorage, (0...storage.length).contains(offset) else { return }
+        let selection = NSRange(location: offset, length: 0)
+        let value = storage.string as NSString
+        let leading = offset > 0 && needsSpace(nextTo: value.character(at: offset - 1), punctuation: "([") ? " " : ""
+        let trailing = offset < storage.length && needsSpace(nextTo: value.character(at: offset), punctuation: ",.;:!?)]") ? " " : ""
+        if markdownMode {
+            insertText(leading + citation.markup + trailing, replacementRange: selection)
+            return
+        }
+        let lineStart = value.lineRange(for: selection).location
+        let paragraph = lineStart < storage.length
+            ? StudioMarkdown.paragraph(storage.attribute(StudioMarkdown.block, at: lineStart, effectiveRange: nil))
+            : .text
+        let style = StudioMarkdown.style(paragraph)
+        let replacement = NSMutableAttributedString(string: leading, attributes: style)
+        replacement.append(citation.attributed(paragraph: paragraph))
+        replacement.append(NSAttributedString(string: trailing, attributes: style))
+        let next = NSMutableAttributedString(attributedString: storage)
+        next.replaceCharacters(in: selection, with: replacement)
+        replace(next, selection: NSRange(location: offset + replacement.length, length: 0))
+        typingAttributes = style
+    }
+
+    private func needsSpace(nextTo codeUnit: UInt16, punctuation: String) -> Bool {
+        guard let scalar = Unicode.Scalar(codeUnit) else { return true }
+        return !CharacterSet.whitespacesAndNewlines.contains(scalar) && !punctuation.unicodeScalars.contains(scalar)
     }
 
     private func replace(_ next: NSAttributedString, selection: NSRange) {
