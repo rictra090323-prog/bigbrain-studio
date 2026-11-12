@@ -1,6 +1,7 @@
 """Check the native library migration, local learning and boundaries."""
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -51,7 +52,13 @@ with tempfile.TemporaryDirectory(prefix="bigbrain-native-test-") as tmp:
     graph = call("atlas", "--focus=note:notes/A.md")
     signals = {node["path"]: node["signal"] for node in graph["nodes"]}
     assert signals["notes/A.md"] > signals["notes/Beta.md"] > signals["notes/Gamma.md"] > 0
-    assert len({node["z"] for node in graph["nodes"]}) >= 2
+    note_nodes = [node for node in graph["nodes"] if node["kind"] == "note"]
+    assert len({node["z"] for node in note_nodes}) == len(note_nodes)
+    positions = {node["id"]: (node["x"], node["y"], node["z"]) for node in graph["nodes"]}
+    assert all(0 < math.sqrt(x*x + y*y + z*z) < 1 for x, y, z in positions.values())
+    refocused = call("atlas", "--focus=note:notes/Gamma.md")
+    assert all(positions[node["id"]] == (node["x"], node["y"], node["z"])
+               for node in refocused["nodes"] if node["id"] in positions)
     edges = [edge for edge in graph["edges"] if edge["kind"] == "explicit"]
     assert {(edge["a"], edge["b"]) for edge in edges} >= {("note:notes/A.md", "note:notes/Beta.md"), ("note:notes/Beta.md", "note:notes/Gamma.md")}
 

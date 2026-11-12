@@ -98,6 +98,13 @@ def fingerprint(text):
     return int.from_bytes(blake2s(text.encode("utf-8"), digest_size=8).digest(), "big") / 2**64
 
 
+def sphere_direction(seed):
+    z = 2 * fingerprint(seed + "/latitude") - 1
+    angle = 2 * math.pi * fingerprint(seed + "/longitude")
+    radius = math.sqrt(1 - z * z)
+    return radius * math.cos(angle), radius * math.sin(angle), z
+
+
 def layout(items, edges, learned, seeds, focus, limit, now=None):
     now = time.time() if now is None else now
     neighbors = defaultdict(dict)
@@ -142,7 +149,7 @@ def layout(items, edges, learned, seeds, focus, limit, now=None):
     groups = {label: [key for key in chosen if layer(key) == label] for label in ("source", "note", "skill")}
     reserve = [key for group in groups.values() for key in group[:2]]
     visible = list(dict.fromkeys([*reserve, *(key for key in chosen if activation.get(key, 0) > 0)]))[:limit]
-    # Reserve a useful sample of each depth plane when the focus has few neighbors.
+    # Keep a useful sample of each document type when the focus has few neighbors.
     while len(visible) < limit:
         previous = len(visible)
         for group in groups.values():
@@ -153,18 +160,18 @@ def layout(items, edges, learned, seeds, focus, limit, now=None):
             break
     visible_set = set(visible)
     nodes = []
-    planes = {"source": -0.81, "note": 0.0, "skill": 0.81}
     for key in visible:
         row = items[key]
-        top = row["path"].split("/")[0]
-        # Folder anchors keep a family together while each node retains a stable position.
-        cluster = 2 * math.pi * fingerprint(top)
-        angle = 2 * math.pi * fingerprint(key)
-        radius = 0.28 + 0.59 * math.sqrt(fingerprint(key + "/radius"))
-        x = 0.38 * math.cos(cluster) + radius * math.cos(angle)
-        y = 0.30 * math.sin(cluster) + radius * math.sin(angle)
+        parts = row["path"].split("/", 1)
+        folder = parts[0] if len(parts) > 1 else ""
+        anchor = sphere_direction("folder/" + folder)
+        direction = sphere_direction(key)
+        # A cube root samples the sphere's volume evenly. A small folder offset
+        # keeps the layout stable and gently groups notes without flattening the cloud.
+        radius = 0.87 * fingerprint(key + "/radius") ** (1 / 3)
+        x, y, z = (0.13 * center + radius * axis for center, axis in zip(anchor, direction))
         nodes.append({"id": key, "title": row["title"], "path": row["path"], "file": row["file"],
-                      "kind": row["kind"], "layer": layer(key), "x": x, "y": y, "z": planes[layer(key)],
+                      "kind": row["kind"], "layer": layer(key), "x": x, "y": y, "z": z,
                       "signal": round(activation.get(key, 0), 4), "degree": len(neighbors[key])})
     links = [{"a": a, "b": b, "kind": "explicit", "weight": 0.82, "count": 1}
              for a, b in sorted(edges) if a in visible_set and b in visible_set]

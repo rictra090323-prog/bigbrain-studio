@@ -12,6 +12,7 @@
 		3CE4372D9E4D2EECC753ED1E /* Distribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEC41750933E1E6068F7BA1 /* Distribution.swift */; };
 		4FC873795A63D7CCADFA5CF1 /* Skills in Resources */ = {isa = PBXBuildFile; fileRef = 9E3FB485F822EA1F2E8E409D /* Skills */; };
 		556E1093873FD553293C3517 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1D5D31EC874C76B51802EB9B /* AppIcon.icns */; };
+		0B5A713873FD553293C35170 /* AtlasBrain.mesh in Resources */ = {isa = PBXBuildFile; fileRef = 0B5A71EC874C76B51802EB90 /* AtlasBrain.mesh */; };
 		7285851CD9CCD70565E0E67A /* BigBrain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7451418FBDBD83B54B2A613 /* BigBrain.swift */; };
 		A45CC0E308A2E20C434B38E6 /* public_source.py in Resources */ = {isa = PBXBuildFile; fileRef = 1D88773691F6ABB06C0F7ACE /* public_source.py */; };
 		BDD21E2C08492976958F971E /* SpeechTranscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74BB370CE87A68B157D6FC1A /* SpeechTranscription.swift */; };
@@ -28,6 +29,7 @@
 /* Begin PBXFileReference section */
 		097E9D2581E337581647D64F /* network.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = network.py; sourceTree = "<group>"; };
 		1D5D31EC874C76B51802EB9B /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		0B5A71EC874C76B51802EB90 /* AtlasBrain.mesh */ = {isa = PBXFileReference; lastKnownFileType = file; path = AtlasBrain.mesh; sourceTree = "<group>"; };
 		1D88773691F6ABB06C0F7ACE /* public_source.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = public_source.py; sourceTree = "<group>"; };
 		378599DD9ABBF375D2F5B8BF /* Icon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Icon.swift; sourceTree = "<group>"; };
 		41A569E8F61DD166EAC28E75 /* word_import.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = word_import.py; sourceTree = "<group>"; };
@@ -77,6 +79,7 @@
 				1D88773691F6ABB06C0F7ACE /* public_source.py */,
 				41A569E8F61DD166EAC28E75 /* word_import.py */,
 				1D5D31EC874C76B51802EB9B /* AppIcon.icns */,
+				0B5A71EC874C76B51802EB90 /* AtlasBrain.mesh */,
 				378599DD9ABBF375D2F5B8BF /* Icon.swift */,
 				739583C9C1399327C04DEA83 /* icon.py */,
 				F932BC0BDAE1084D39B7ECB3 /* Info.plist */,
@@ -189,6 +192,7 @@
 				A45CC0E308A2E20C434B38E6 /* public_source.py in Resources */,
 				2566C3B23B9AD28A074A2C7B /* word_import.py in Resources */,
 				556E1093873FD553293C3517 /* AppIcon.icns in Resources */,
+				0B5A713873FD553293C35170 /* AtlasBrain.mesh in Resources */,
 				4FC873795A63D7CCADFA5CF1 /* Skills in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -19,3 +19,8 @@ Använd ett slutligt bundle-ID, medlemskap i Apple Developer Program och Mac App
 - [Apples granskningsregler](https://developer.apple.com/app-store/review/guidelines/)
 - [App Sandbox](https://developer.apple.com/documentation/xcode/configuring-the-macos-app-sandbox)
 - [Foundation Models](https://developer.apple.com/documentation/foundationmodels/generating-content-and-performing-tasks-with-foundation-models)
+## Hjärnmodellen i Atlas
+
+Hjärnvyn använder [Innerscenes Brain](https://www.innerscene.com/tools/library/3d-parts/brain-10d8f88f), en CC0-modell med skulpterade hjärnveck. Den lokala resursen innehåller modellens geometri och normaler. Kopplingar följer ytan och lyser upp närliggande veck.
+
+För att packa om originalets GLB, kör `python3 Distribution/pack-atlas-brain.py brain.glb Sources/AtlasBrain.mesh`.

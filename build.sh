@@ -10,7 +10,7 @@ fi
 /usr/bin/python3 Sources/icon.py .build/AppIcon.icns
 mkdir -p "$destination/Contents/MacOS" "$destination/Contents/Resources"
 cp .build/BigBrain "$destination/Contents/MacOS/BigBrain"
-cp .build/AppIcon.icns Sources/brain.py Sources/network.py Sources/public_source.py Sources/word_import.py Sources/bigbrain "$destination/Contents/Resources/"
+cp .build/AppIcon.icns Sources/AtlasBrain.mesh Sources/brain.py Sources/network.py Sources/public_source.py Sources/word_import.py Sources/bigbrain "$destination/Contents/Resources/"
 /usr/bin/ditto Skills "$destination/Contents/Resources/Skills"
 cp Sources/Info.plist "$destination/Contents/Info.plist"
 /usr/bin/codesign --force --sign - "$destination"

@@ -90,6 +90,33 @@ struct StudioTextSmoke {
         editor.textStorage?.setAttributedString(StudioMarkdown.read("Text\n\n## Rubrik"))
         editor.insertCitation(citation, at: ("Text\n\n" as NSString).length)
         precondition(StudioMarkdown.write(editor.textStorage!) == "Text\n\n## " + citation.markup + " Rubrik")
-        print("PASS: Markdown roundtrip, rich styles, UTF-16 selections, lists, checklists and citation insertion")
+        let link = StudioWebLink(title: "Läs mer 🍓", address: "https://example.org/a?x=1&y=2")!
+        precondition(StudioWebLink(title: "Fel", address: "file:///tmp/anteckning.md") == nil)
+        precondition(StudioWebLink(title: "Fel", address: "https://name:pass@example.org") == nil)
+        editor.textStorage?.setAttributedString(StudioMarkdown.read("# Läs mer 🍓\n\nAndra raden"))
+        editor.setSelectedRange((editor.string as NSString).range(of: link.title))
+        editor.insertWebLink(link)
+        let linkedNote = "# " + link.markup + "\n\nAndra raden"
+        precondition(StudioMarkdown.write(editor.textStorage!) == linkedNote)
+        let reopenedLink = StudioMarkdown.read(linkedNote)
+        precondition(reopenedLink.string == "Läs mer 🍓\n\nAndra raden")
+        precondition(reopenedLink.attribute(.link, at: 0, effectiveRange: nil) as? URL == link.url)
+
+        var table = StudioTable(markdown: "| Rubrik | Värde |\n| :--- | ---: |\n| Å | A\\|B |")!
+        precondition(table.rows[1] == ["Å", "A\\|B"])
+        table.addColumn()
+        table.rows[1][2] = "A|B"
+        precondition(StudioTable(markdown: table.markdown)?.rows[1] == ["Å", "A\\|B", "A\\|B"])
+        table.removeColumn()
+        editor.textStorage?.setAttributedString(StudioMarkdown.read("Före\nEfter"))
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        editor.insertMarkdownBlock(table.markdown)
+        precondition(StudioMarkdown.write(editor.textStorage!) == "Före\n\n" + table.markdown + "\n\nEfter")
+        editor.setSelectedRange((editor.string as NSString).range(of: "Värde"))
+        let selected = editor.selectedTable!
+        table.rows[1][0] = "Ändrat"
+        editor.insertMarkdownBlock(table.markdown, replacing: selected.range)
+        precondition(StudioMarkdown.write(editor.textStorage!) == "Före\n\n" + table.markdown + "\n\nEfter")
+        print("PASS: Markdown roundtrip, rich styles, lists, checklists, citations, web links and table editing")
     }
 }

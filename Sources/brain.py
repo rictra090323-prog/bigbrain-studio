@@ -6,6 +6,7 @@ import datetime as dt
 import difflib
 import fcntl
 import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -167,6 +168,9 @@ def connect(readonly=False):
         CREATE TABLE IF NOT EXISTS files (
             key TEXT PRIMARY KEY, path TEXT, file TEXT, title TEXT, kind TEXT, sig TEXT
         );
+        CREATE TABLE IF NOT EXISTS file_previews (
+            key TEXT PRIMARY KEY, preview TEXT NOT NULL
+        );
         CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
             key UNINDEXED, title, body, tokenize='unicode61 remove_diacritics 2'
         );
@@ -247,6 +251,46 @@ def title_for(path, body, kind):
     return path.stem
 
 
+def note_preview(body):
+    lines = iter(body.splitlines())
+    first = next(lines, "")
+    if first.strip() == "---":
+        for line in lines:
+            if line.strip() in ("---", "..."):
+                break
+        else:
+            return ""
+    else:
+        lines = itertools.chain((first,), lines)
+    fence = None
+    paragraphs = []
+    size = 0
+    for line in lines:
+        text = line.strip()
+        if text.startswith(("```", "~~~")):
+            if fence is None:
+                fence = text[:3]
+            elif text.startswith(fence):
+                fence = None
+            continue
+        if fence or not text or text.startswith(("#", "|", "%%", "Källa:")) or text in ("---", "***", "___"):
+            continue
+        text = re.sub(r"^(?:>\s*|[-*+]\s+|\d+\.\s+|\[[ xX]\]\s+)+", "", text[:600])
+        text = re.sub(r"!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]*\)", "", text)
+        text = re.sub(r"\[\[([^\]|]+)\|([^\]]+)\]\]", r"\2", text)
+        text = re.sub(r"\[\[([^\]]+)\]\]|\[([^\]]+)\]\([^)]*\)", r"\1\2", text)
+        text = re.sub(r"</?u>|[*`~]", "", text).strip()
+        if text:
+            paragraphs.append(text)
+            size += len(text)
+        if size >= 360 or len(paragraphs) >= 2:
+            break
+    summary = " ".join(re.split(r"(?<=[.!?])\s+", " ".join(paragraphs))[:2])
+    if len(summary) > 240:
+        summary = summary[:241].rsplit(" ", 1)[0][:240].rstrip() + "…"
+    return summary
+
+
 def split_chunks(body, size=1450, overlap=180):
     start = 0
     while start < len(body):
@@ -273,7 +317,8 @@ def refresh(force=False, config=None):
             return
         with connect() as conn:
             scope_id = index_scope(config)
-            if not force and metadata(conn, "scope") == scope_id and time.time() - float(metadata(conn, "last_scan") or 0) < 3:
+            rebuild_previews = metadata(conn, "file_preview_version") != "1"
+            if not force and not rebuild_previews and metadata(conn, "scope") == scope_id and time.time() - float(metadata(conn, "last_scan") or 0) < 3:
                 return
             old = {row["key"]: row["sig"] for row in conn.execute("SELECT key,sig FROM files")}
             paths = {}
@@ -301,13 +346,16 @@ def refresh(force=False, config=None):
                     if info.st_size > MAX_FILE:
                         continue
                     sig = f"{path}:{info.st_mtime_ns}:{info.st_size}"
-                    if old.get(key) == sig:
+                    if old.get(key) == sig and not rebuild_previews:
                         found.add(key)
                         continue
                     body = path.read_text(encoding="utf-8")
                 except (OSError, UnicodeError):
                     continue
                 found.add(key)
+                conn.execute("INSERT OR REPLACE INTO file_previews VALUES (?,?)", (key, note_preview(body)))
+                if old.get(key) == sig:
+                    continue
                 changed = True
                 title = title_for(path, body, kind)
                 conn.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?)",
@@ -318,9 +366,11 @@ def refresh(force=False, config=None):
             for key in old.keys() - found:
                 conn.execute("DELETE FROM chunks WHERE key=?", (key,))
                 conn.execute("DELETE FROM files WHERE key=?", (key,))
+                conn.execute("DELETE FROM file_previews WHERE key=?", (key,))
             if old.keys() - found or changed:
                 put_meta(conn, "content_changed", time.time())
             put_meta(conn, "scope", scope_id)
+            put_meta(conn, "file_preview_version", "1")
             put_meta(conn, "last_scan", time.time())
 
 
@@ -449,8 +499,29 @@ def vector_hits(query, scope, limit, config):
         excerpt = snippet if isinstance(snippet, str) and snippet and snippet in note["body"] else note["body"]
         hits.append({"id": f"note:{relative}", "path": relative, "file": str(p),
                      "title": title_for(p, note["body"], kind), "kind": kind,
-                     "excerpt": excerpt[:950], "match": "vector"})
+                     "excerpt": excerpt[:950], "match": "vector", "preview": note_preview(note["body"])})
     return hits
+
+
+def hit_from_row(row):
+    return {"id": row["key"], "path": row["path"], "file": row["file"], "title": row["title"],
+            "kind": row["kind"], "excerpt": row["excerpt"], "match": "text", "preview": row["preview"]}
+
+
+def preview_columns(conn):
+    if metadata(conn, "file_preview_version") == "1":
+        return "p.preview", " LEFT JOIN file_previews p ON p.key=f.key"
+    return "NULL AS preview", ""
+
+
+def library():
+    with scoped_index(settings()) as conn:
+        if conn is None:
+            return []
+        preview, join = preview_columns(conn)
+        return [hit_from_row(row) for row in conn.execute(
+            f"SELECT f.*, '' AS excerpt, {preview} FROM files f{join} "
+            "WHERE f.kind IN ('note','reference') ORDER BY f.title COLLATE NOCASE, f.path")]
 
 
 def search(query, limit=8, scope="all", semantic=True, *, config=None):
@@ -471,23 +542,23 @@ def search(query, limit=8, scope="all", semantic=True, *, config=None):
     with scoped_index(config) as conn:
         if conn is None:
             return []
+        preview, join = preview_columns(conn)
         if not query:
             order = "f.rowid DESC" if scope == "inbox" else "f.kind='inbox' DESC, f.title COLLATE NOCASE"
-            rows = conn.execute("SELECT f.*, '' AS excerpt FROM files f WHERE 1" + scope_filter +
+            rows = conn.execute(f"SELECT f.*, '' AS excerpt, {preview} FROM files f{join} WHERE 1" + scope_filter +
                                 " ORDER BY " + order + " LIMIT ?", [*args, limit])
         elif not terms:
             return []
         else:
             rows = conn.execute(
-                "SELECT f.*, snippet(chunks,2,'','',' … ',39) AS excerpt FROM chunks "
-                "JOIN files f ON f.key=chunks.key WHERE chunks MATCH ?" + scope_filter +
+                f"SELECT f.*, {preview}, snippet(chunks,2,'','',' … ',39) AS excerpt FROM chunks "
+                f"JOIN files f ON f.key=chunks.key{join} WHERE chunks MATCH ?" + scope_filter +
                 " ORDER BY bm25(chunks,0.0,5.0,1.0) LIMIT ?", [" OR ".join(dict.fromkeys(terms)), *args, limit * 16])
         lexical = {}
         for row in rows:
             key = row["key"]
             if key not in lexical:
-                lexical[key] = {"id": key, "path": row["path"], "file": row["file"], "title": row["title"],
-                                "kind": row["kind"], "excerpt": row["excerpt"], "match": "text"}
+                lexical[key] = hit_from_row(row)
     vectors = vector_hits(query, scope, limit, config) if semantic and query else []
     scores = {}
     combined = dict(lexical)
@@ -1461,7 +1532,7 @@ def input_text(value):
 def main():
     parser = argparse.ArgumentParser(prog="bigbrain")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("dashboard", "index", "lint", "agent", "auto", "configure", "install", "codex-status", "vectors", "learn", "local-prompt", "local-finish"):
+    for name in ("dashboard", "index", "library", "lint", "agent", "auto", "configure", "install", "codex-status", "vectors", "learn", "local-prompt", "local-finish"):
         commands.add_parser(name)
     cmd = commands.add_parser("adopt")
     cmd.add_argument("--from", dest="origin", default="")
@@ -1544,6 +1615,8 @@ def main():
         return import_phone_capture(sys.stdin.buffer.read(MAX_CAPTURE_FILE + 1))
     if action == "atlas":
         return atlas(args.query, args.focus, recent=args.recent, notes_only=args.notes_only)
+    if action == "library":
+        return library()
     if action == "activate":
         return activate(args.previous, args.current)
     if action == "save-note":
