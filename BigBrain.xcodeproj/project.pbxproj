@@ -1,392 +1,397 @@
 // !$*UTF8*$!
 {
-  archiveVersion = 1;
-  classes = {};
-  objectVersion = 56;
-  objects = {
-    A7451418FBDBD83B54B2A613 = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "BigBrain.swift";
-      sourceTree = "<group>";
-    };
-    7285851CD9CCD70565E0E67A = {
-      isa = PBXBuildFile;
-      fileRef = A7451418FBDBD83B54B2A613;
-    };
-    892AA5E9571AA0676DE85B59 = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "Atlas.swift";
-      sourceTree = "<group>";
-    };
-    000959C8CF746B8F1E43F273 = {
-      isa = PBXBuildFile;
-      fileRef = 892AA5E9571AA0676DE85B59;
-    };
-    BEEC41750933E1E6068F7BA1 = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "Distribution.swift";
-      sourceTree = "<group>";
-    };
-    3CE4372D9E4D2EECC753ED1E = {
-      isa = PBXBuildFile;
-      fileRef = BEEC41750933E1E6068F7BA1;
-    };
-    74BB370CE87A68B157D6FC1A = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "SpeechTranscription.swift";
-      sourceTree = "<group>";
-    };
-    BDD21E2C08492976958F971E = {
-      isa = PBXBuildFile;
-      fileRef = 74BB370CE87A68B157D6FC1A;
-    };
-    C20000000000000000000001 = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "StudioEditor.swift";
-      sourceTree = "<group>";
-    };
-    C20000000000000000000002 = {
-      isa = PBXBuildFile;
-      fileRef = C20000000000000000000001;
-    };
-    C20000000000000000000003 = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "StudioMarkdown.swift";
-      sourceTree = "<group>";
-    };
-    C20000000000000000000004 = {
-      isa = PBXBuildFile;
-      fileRef = C20000000000000000000003;
-    };
-    C20000000000000000000005 = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "StudioExport.swift";
-      sourceTree = "<group>";
-    };
-    C20000000000000000000006 = {
-      isa = PBXBuildFile;
-      fileRef = C20000000000000000000005;
-    };
-    762FA74D1550481F9BE91C88 = {
-      isa = PBXFileReference;
-      lastKnownFileType = text.script.python;
-      path = "brain.py";
-      sourceTree = "<group>";
-    };
-    D5159226CA75B235CD1B10C7 = {
-      isa = PBXBuildFile;
-      fileRef = 762FA74D1550481F9BE91C88;
-    };
-    097E9D2581E337581647D64F = {
-      isa = PBXFileReference;
-      lastKnownFileType = text.script.python;
-      path = "network.py";
-      sourceTree = "<group>";
-    };
-    FAF084D966F80AF3ED55FF23 = {
-      isa = PBXBuildFile;
-      fileRef = 097E9D2581E337581647D64F;
-    };
-    1D88773691F6ABB06C0F7ACE = {
-      isa = PBXFileReference;
-      lastKnownFileType = text.script.python;
-      path = "public_source.py";
-      sourceTree = "<group>";
-    };
-    A45CC0E308A2E20C434B38E6 = {
-      isa = PBXBuildFile;
-      fileRef = 1D88773691F6ABB06C0F7ACE;
-    };
-    41A569E8F61DD166EAC28E75 = {
-      isa = PBXFileReference;
-      lastKnownFileType = text.script.python;
-      path = "word_import.py";
-      sourceTree = "<group>";
-    };
-    2566C3B23B9AD28A074A2C7B = {
-      isa = PBXBuildFile;
-      fileRef = 41A569E8F61DD166EAC28E75;
-    };
-    1D5D31EC874C76B51802EB9B = {
-      isa = PBXFileReference;
-      lastKnownFileType = image.icns;
-      path = "AppIcon.icns";
-      sourceTree = "<group>";
-    };
-    556E1093873FD553293C3517 = {
-      isa = PBXBuildFile;
-      fileRef = 1D5D31EC874C76B51802EB9B;
-    };
-    378599DD9ABBF375D2F5B8BF = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "Icon.swift";
-      sourceTree = "<group>";
-    };
-    739583C9C1399327C04DEA83 = {
-      isa = PBXFileReference;
-      lastKnownFileType = text.script.python;
-      path = "icon.py";
-      sourceTree = "<group>";
-    };
-    F932BC0BDAE1084D39B7ECB3 = {
-      isa = PBXFileReference;
-      lastKnownFileType = text.plist.xml;
-      path = "Info.plist";
-      sourceTree = "<group>";
-    };
-    9E3FB485F822EA1F2E8E409D = {
-      isa = PBXFileReference;
-      lastKnownFileType = folder;
-      path = Skills;
-      sourceTree = "<group>";
-    };
-    4FC873795A63D7CCADFA5CF1 = {
-      isa = PBXBuildFile;
-      fileRef = 9E3FB485F822EA1F2E8E409D;
-    };
-    C5E2F2E64911C36A70FB9C29 = {
-      isa = PBXFileReference;
-      lastKnownFileType = text.plist.entitlements;
-      path = "Distribution/AppSandbox.entitlements";
-      sourceTree = "<group>";
-    };
-    5E9C00B5C0147A60EDBD7284 = {
-      isa = PBXFileReference;
-      lastKnownFileType = text.plist.xml;
-      path = "Distribution/Xcode-Info.plist";
-      sourceTree = "<group>";
-    };
-    EEACC3AB0FCABBC22392C020 = {
-      isa = PBXFileReference;
-      explicitFileType = wrapper.application;
-      includeInIndex = 0;
-      path = "BigBrain Studio.app";
-      sourceTree = BUILT_PRODUCTS_DIR;
-    };
-    61ED36875D984EBFB59AD916 = {
-      isa = PBXGroup;
-      children = (A7451418FBDBD83B54B2A613, 892AA5E9571AA0676DE85B59, BEEC41750933E1E6068F7BA1, 74BB370CE87A68B157D6FC1A, C20000000000000000000001, C20000000000000000000003, C20000000000000000000005, 762FA74D1550481F9BE91C88, 097E9D2581E337581647D64F, 1D88773691F6ABB06C0F7ACE, 41A569E8F61DD166EAC28E75, 1D5D31EC874C76B51802EB9B, 378599DD9ABBF375D2F5B8BF, 739583C9C1399327C04DEA83, F932BC0BDAE1084D39B7ECB3, );
-      path = Sources;
-      sourceTree = "<group>";
-    };
-    C10000000000000000000001 = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "BigBrainCaptureApp.swift";
-      sourceTree = "<group>";
-    };
-    C10000000000000000000002 = {
-      isa = PBXFileReference;
-      lastKnownFileType = sourcecode.swift;
-      path = "CaptureQueue.swift";
-      sourceTree = "<group>";
-    };
-    C10000000000000000000003 = {
-      isa = PBXFileReference;
-      lastKnownFileType = text.plist.xml;
-      path = "Info.plist";
-      sourceTree = "<group>";
-    };
-    C10000000000000000000004 = {
-      isa = PBXGroup;
-      children = (C10000000000000000000001, C10000000000000000000002, C10000000000000000000003, );
-      path = Mobile;
-      sourceTree = "<group>";
-    };
-    C10000000000000000000005 = {
-      isa = PBXBuildFile;
-      fileRef = C10000000000000000000001;
-    };
-    C10000000000000000000006 = {
-      isa = PBXBuildFile;
-      fileRef = C10000000000000000000002;
-    };
-    C10000000000000000000020 = {
-      isa = PBXBuildFile;
-      fileRef = 74BB370CE87A68B157D6FC1A;
-    };
-    C10000000000000000000007 = {
-      isa = PBXSourcesBuildPhase;
-      files = (C10000000000000000000005, C10000000000000000000006, C10000000000000000000020, );
-      buildActionMask = 2147483647;
-      runOnlyForDeploymentPostprocessing = 0;
-    };
-    C10000000000000000000008 = {
-      isa = PBXFileReference;
-      explicitFileType = wrapper.application;
-      includeInIndex = 0;
-      path = "BigBrain Capture.app";
-      sourceTree = BUILT_PRODUCTS_DIR;
-    };
-    C10000000000000000000009 = {
-      isa = XCBuildConfiguration;
-      name = Debug;
-      buildSettings = {
-        ARCHS = "$(ARCHS_STANDARD)";
-        CODE_SIGN_STYLE = Automatic;
-        CURRENT_PROJECT_VERSION = 1;
-        GENERATE_INFOPLIST_FILE = YES;
-        INFOPLIST_FILE = Mobile/Info.plist;
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-        INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-        IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-        MARKETING_VERSION = 0.1;
-        PRODUCT_BUNDLE_IDENTIFIER = local.bigbrain.capture;
-        PRODUCT_NAME = "BigBrain Capture";
-        SDKROOT = iphoneos;
-        SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-        SUPPORTS_MACCATALYST = NO;
-        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-        SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-        SWIFT_VERSION = 5.0;
-        TARGETED_DEVICE_FAMILY = 1;
-      };
-    };
-    C1000000000000000000000A = {
-      isa = XCBuildConfiguration;
-      name = Release;
-      buildSettings = {
-        ARCHS = "$(ARCHS_STANDARD)";
-        CODE_SIGN_STYLE = Automatic;
-        CURRENT_PROJECT_VERSION = 1;
-        GENERATE_INFOPLIST_FILE = YES;
-        INFOPLIST_FILE = Mobile/Info.plist;
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-        INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-        IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-        MARKETING_VERSION = 0.1;
-        PRODUCT_BUNDLE_IDENTIFIER = local.bigbrain.capture;
-        PRODUCT_NAME = "BigBrain Capture";
-        SDKROOT = iphoneos;
-        SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-        SUPPORTS_MACCATALYST = NO;
-        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-        SWIFT_VERSION = 5.0;
-        TARGETED_DEVICE_FAMILY = 1;
-      };
-    };
-    C1000000000000000000000B = {
-      isa = XCConfigurationList;
-      buildConfigurations = (C10000000000000000000009, C1000000000000000000000A, );
-      defaultConfigurationIsVisible = 0;
-      defaultConfigurationName = Debug;
-    };
-    C1000000000000000000000C = {
-      isa = PBXNativeTarget;
-      buildConfigurationList = C1000000000000000000000B;
-      buildPhases = (C10000000000000000000007, );
-      buildRules = ();
-      dependencies = ();
-      name = "BigBrain Capture";
-      productName = "BigBrain Capture";
-      productReference = C10000000000000000000008;
-      productType = "com.apple.product-type.application";
-    };
-    C34313E59EC04ADFDF175529 = {
-      isa = PBXGroup;
-      children = (EEACC3AB0FCABBC22392C020, C10000000000000000000008, );
-      name = Products;
-      sourceTree = "<group>";
-    };
-    ABE4B8E98CA46BCCC5C0B652 = {
-      isa = PBXGroup;
-      children = (61ED36875D984EBFB59AD916, C10000000000000000000004, 9E3FB485F822EA1F2E8E409D, C5E2F2E64911C36A70FB9C29, 5E9C00B5C0147A60EDBD7284, C34313E59EC04ADFDF175529, );
-      sourceTree = "<group>";
-    };
-    799C7D33044E635AF6C9081D = {
-      isa = PBXSourcesBuildPhase;
-      files = (7285851CD9CCD70565E0E67A, 000959C8CF746B8F1E43F273, 3CE4372D9E4D2EECC753ED1E, BDD21E2C08492976958F971E, C20000000000000000000002, C20000000000000000000004, C20000000000000000000006, );
-      buildActionMask = 2147483647;
-      runOnlyForDeploymentPostprocessing = 0;
-    };
-    88AD33764DAAF75AB6D721FE = {
-      isa = PBXResourcesBuildPhase;
-      files = (D5159226CA75B235CD1B10C7, FAF084D966F80AF3ED55FF23, A45CC0E308A2E20C434B38E6, 2566C3B23B9AD28A074A2C7B, 556E1093873FD553293C3517, 4FC873795A63D7CCADFA5CF1, );
-      buildActionMask = 2147483647;
-      runOnlyForDeploymentPostprocessing = 0;
-    };
-    5EF9B8D55FC57010A1D998CE = {
-      isa = PBXFrameworksBuildPhase;
-      files = ();
-      buildActionMask = 2147483647;
-      runOnlyForDeploymentPostprocessing = 0;
-    };
-    EBAE7F244CB585F5C53417D3 = {
-      isa = PBXShellScriptBuildPhase;
-      files = ();
-      name = "Bygg och signera lokal Python-runtime";
-      inputPaths = ("$(SRCROOT)/Dependencies/python-3.12.16-arm64.tar.gz", "$(SRCROOT)/Distribution/embed-python-runtime.sh", "$(SRCROOT)/Distribution/Helper.entitlements",);
-      outputPaths = ("$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/PythonRuntime.framework",);
-      shellPath = "/bin/sh";
-      shellScript = "set -eu\n\"$SRCROOT/Distribution/embed-python-runtime.sh\"   \"$SRCROOT/Dependencies/python-3.12.16-arm64.tar.gz\"   \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/PythonRuntime.framework\"\n";
-      buildActionMask = 2147483647;
-      runOnlyForDeploymentPostprocessing = 0;
-    };
-    8EBDAE52765CBEAF444CD2CF = {
-      isa = XCBuildConfiguration;
-      name = Debug;
-      buildSettings = { ARCHS = "arm64"; MACOSX_DEPLOYMENT_TARGET = "26.0"; SDKROOT = "macosx"; SUPPORTED_PLATFORMS = "macosx"; SWIFT_VERSION = "5.0"; };
-    };
-    D2390B67C31237C8BDE19825 = {
-      isa = XCBuildConfiguration;
-      name = Debug;
-      buildSettings = { PRODUCT_NAME = "BigBrain Studio"; PRODUCT_BUNDLE_IDENTIFIER = "local.bigbrain.studio.xcode"; GENERATE_INFOPLIST_FILE = "NO"; INFOPLIST_FILE = "Distribution/Xcode-Info.plist"; CODE_SIGN_ENTITLEMENTS = "Distribution/AppSandbox.entitlements"; CODE_SIGN_STYLE = "Manual"; CODE_SIGN_IDENTITY = "-"; CODE_SIGNING_REQUIRED = "YES"; ENABLE_APP_SANDBOX = "YES"; ENABLE_USER_SCRIPT_SANDBOXING = "NO"; ENABLE_HARDENED_RUNTIME = "NO"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; DEBUG_INFORMATION_FORMAT = "dwarf"; };
-    };
-    9BC2985548E20337CD3089E9 = {
-      isa = XCBuildConfiguration;
-      name = Release;
-      buildSettings = { ARCHS = "arm64"; MACOSX_DEPLOYMENT_TARGET = "26.0"; SDKROOT = "macosx"; SUPPORTED_PLATFORMS = "macosx"; SWIFT_VERSION = "5.0"; };
-    };
-    7A86DF8C2E7AA11E2BB1A021 = {
-      isa = XCBuildConfiguration;
-      name = Release;
-      buildSettings = { PRODUCT_NAME = "BigBrain Studio"; PRODUCT_BUNDLE_IDENTIFIER = "local.bigbrain.studio.xcode"; GENERATE_INFOPLIST_FILE = "NO"; INFOPLIST_FILE = "Distribution/Xcode-Info.plist"; CODE_SIGN_ENTITLEMENTS = "Distribution/AppSandbox.entitlements"; CODE_SIGN_STYLE = "Manual"; CODE_SIGN_IDENTITY = "-"; CODE_SIGNING_REQUIRED = "YES"; ENABLE_APP_SANDBOX = "YES"; ENABLE_USER_SCRIPT_SANDBOXING = "NO"; ENABLE_HARDENED_RUNTIME = "NO"; SWIFT_OPTIMIZATION_LEVEL = "-O"; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; };
-    };
-    CB3E2A7FB054CC2C399CC35B = {
-      isa = XCConfigurationList;
-      buildConfigurations = (8EBDAE52765CBEAF444CD2CF, 9BC2985548E20337CD3089E9, );
-      defaultConfigurationIsVisible = 0;
-      defaultConfigurationName = Debug;
-    };
-    A9EE4DA646FB7E7C48521379 = {
-      isa = XCConfigurationList;
-      buildConfigurations = (D2390B67C31237C8BDE19825, 7A86DF8C2E7AA11E2BB1A021, );
-      defaultConfigurationIsVisible = 0;
-      defaultConfigurationName = Debug;
-    };
-    32C48BBFF23A258518E8985E = {
-      isa = PBXNativeTarget;
-      buildConfigurationList = A9EE4DA646FB7E7C48521379;
-      buildPhases = (799C7D33044E635AF6C9081D, 5EF9B8D55FC57010A1D998CE, 88AD33764DAAF75AB6D721FE, EBAE7F244CB585F5C53417D3, );
-      buildRules = ();
-      dependencies = ();
-      name = "BigBrain Studio";
-      productName = "BigBrain Studio";
-      productReference = EEACC3AB0FCABBC22392C020;
-      productType = "com.apple.product-type.application";
-    };
-    CBF7AFD277D788BA2359364C = {
-      isa = PBXProject;
-      attributes = { LastUpgradeCheck = 2600; };
-      buildConfigurationList = CB3E2A7FB054CC2C399CC35B;
-      compatibilityVersion = "Xcode 14.0";
-      developmentRegion = sv;
-      hasScannedForEncodings = 0;
-      knownRegions = (sv, en, Base,);
-      mainGroup = ABE4B8E98CA46BCCC5C0B652;
-      productRefGroup = C34313E59EC04ADFDF175529;
-      projectDirPath = "";
-      projectRoot = "";
-      targets = (32C48BBFF23A258518E8985E, C1000000000000000000000C, );
-    };
-  };
-  rootObject = CBF7AFD277D788BA2359364C;
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		000959C8CF746B8F1E43F273 /* Atlas.swift in Sources */ = {isa = PBXBuildFile; fileRef = 892AA5E9571AA0676DE85B59 /* Atlas.swift */; };
+		2566C3B23B9AD28A074A2C7B /* word_import.py in Resources */ = {isa = PBXBuildFile; fileRef = 41A569E8F61DD166EAC28E75 /* word_import.py */; };
+		3CE4372D9E4D2EECC753ED1E /* Distribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEC41750933E1E6068F7BA1 /* Distribution.swift */; };
+		4FC873795A63D7CCADFA5CF1 /* Skills in Resources */ = {isa = PBXBuildFile; fileRef = 9E3FB485F822EA1F2E8E409D /* Skills */; };
+		556E1093873FD553293C3517 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1D5D31EC874C76B51802EB9B /* AppIcon.icns */; };
+		0B5A713873FD553293C35170 /* AtlasBrain.mesh in Resources */ = {isa = PBXBuildFile; fileRef = 0B5A71EC874C76B51802EB90 /* AtlasBrain.mesh */; };
+		7285851CD9CCD70565E0E67A /* BigBrain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7451418FBDBD83B54B2A613 /* BigBrain.swift */; };
+		A45CC0E308A2E20C434B38E6 /* public_source.py in Resources */ = {isa = PBXBuildFile; fileRef = 1D88773691F6ABB06C0F7ACE /* public_source.py */; };
+		BDD21E2C08492976958F971E /* SpeechTranscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74BB370CE87A68B157D6FC1A /* SpeechTranscription.swift */; };
+		C10000000000000000000005 /* BigBrainCaptureApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000001 /* BigBrainCaptureApp.swift */; };
+		C10000000000000000000006 /* CaptureQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000002 /* CaptureQueue.swift */; };
+		C10000000000000000000020 /* SpeechTranscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74BB370CE87A68B157D6FC1A /* SpeechTranscription.swift */; };
+		C20000000000000000000002 /* StudioEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* StudioEditor.swift */; };
+		C20000000000000000000004 /* StudioMarkdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000003 /* StudioMarkdown.swift */; };
+		C20000000000000000000006 /* StudioExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000005 /* StudioExport.swift */; };
+		D5159226CA75B235CD1B10C7 /* brain.py in Resources */ = {isa = PBXBuildFile; fileRef = 762FA74D1550481F9BE91C88 /* brain.py */; };
+		FAF084D966F80AF3ED55FF23 /* network.py in Resources */ = {isa = PBXBuildFile; fileRef = 097E9D2581E337581647D64F /* network.py */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		097E9D2581E337581647D64F /* network.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = network.py; sourceTree = "<group>"; };
+		1D5D31EC874C76B51802EB9B /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		0B5A71EC874C76B51802EB90 /* AtlasBrain.mesh */ = {isa = PBXFileReference; lastKnownFileType = file; path = AtlasBrain.mesh; sourceTree = "<group>"; };
+		1D88773691F6ABB06C0F7ACE /* public_source.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = public_source.py; sourceTree = "<group>"; };
+		378599DD9ABBF375D2F5B8BF /* Icon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Icon.swift; sourceTree = "<group>"; };
+		41A569E8F61DD166EAC28E75 /* word_import.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = word_import.py; sourceTree = "<group>"; };
+		5E9C00B5C0147A60EDBD7284 /* Distribution/Xcode-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Distribution/Xcode-Info.plist"; sourceTree = "<group>"; };
+		739583C9C1399327C04DEA83 /* icon.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = icon.py; sourceTree = "<group>"; };
+		74BB370CE87A68B157D6FC1A /* SpeechTranscription.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechTranscription.swift; sourceTree = "<group>"; };
+		762FA74D1550481F9BE91C88 /* brain.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = brain.py; sourceTree = "<group>"; };
+		892AA5E9571AA0676DE85B59 /* Atlas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Atlas.swift; sourceTree = "<group>"; };
+		9E3FB485F822EA1F2E8E409D /* Skills */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Skills; sourceTree = "<group>"; };
+		A7451418FBDBD83B54B2A613 /* BigBrain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BigBrain.swift; sourceTree = "<group>"; };
+		BEEC41750933E1E6068F7BA1 /* Distribution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Distribution.swift; sourceTree = "<group>"; };
+		C10000000000000000000001 /* BigBrainCaptureApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BigBrainCaptureApp.swift; sourceTree = "<group>"; };
+		C10000000000000000000002 /* CaptureQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureQueue.swift; sourceTree = "<group>"; };
+		C10000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C10000000000000000000008 /* BigBrain Capture.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BigBrain Capture.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C20000000000000000000001 /* StudioEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioEditor.swift; sourceTree = "<group>"; };
+		C20000000000000000000003 /* StudioMarkdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioMarkdown.swift; sourceTree = "<group>"; };
+		C20000000000000000000005 /* StudioExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioExport.swift; sourceTree = "<group>"; };
+		C5E2F2E64911C36A70FB9C29 /* Distribution/AppSandbox.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Distribution/AppSandbox.entitlements; sourceTree = "<group>"; };
+		EEACC3AB0FCABBC22392C020 /* BigBrain Studio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BigBrain Studio.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		F932BC0BDAE1084D39B7ECB3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5EF9B8D55FC57010A1D998CE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		61ED36875D984EBFB59AD916 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				A7451418FBDBD83B54B2A613 /* BigBrain.swift */,
+				892AA5E9571AA0676DE85B59 /* Atlas.swift */,
+				BEEC41750933E1E6068F7BA1 /* Distribution.swift */,
+				74BB370CE87A68B157D6FC1A /* SpeechTranscription.swift */,
+				C20000000000000000000001 /* StudioEditor.swift */,
+				C20000000000000000000003 /* StudioMarkdown.swift */,
+				C20000000000000000000005 /* StudioExport.swift */,
+				762FA74D1550481F9BE91C88 /* brain.py */,
+				097E9D2581E337581647D64F /* network.py */,
+				1D88773691F6ABB06C0F7ACE /* public_source.py */,
+				41A569E8F61DD166EAC28E75 /* word_import.py */,
+				1D5D31EC874C76B51802EB9B /* AppIcon.icns */,
+				0B5A71EC874C76B51802EB90 /* AtlasBrain.mesh */,
+				378599DD9ABBF375D2F5B8BF /* Icon.swift */,
+				739583C9C1399327C04DEA83 /* icon.py */,
+				F932BC0BDAE1084D39B7ECB3 /* Info.plist */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		ABE4B8E98CA46BCCC5C0B652 = {
+			isa = PBXGroup;
+			children = (
+				61ED36875D984EBFB59AD916 /* Sources */,
+				C10000000000000000000004 /* Mobile */,
+				9E3FB485F822EA1F2E8E409D /* Skills */,
+				C5E2F2E64911C36A70FB9C29 /* Distribution/AppSandbox.entitlements */,
+				5E9C00B5C0147A60EDBD7284 /* Distribution/Xcode-Info.plist */,
+				C34313E59EC04ADFDF175529 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C10000000000000000000004 /* Mobile */ = {
+			isa = PBXGroup;
+			children = (
+				C10000000000000000000001 /* BigBrainCaptureApp.swift */,
+				C10000000000000000000002 /* CaptureQueue.swift */,
+				C10000000000000000000003 /* Info.plist */,
+			);
+			path = Mobile;
+			sourceTree = "<group>";
+		};
+		C34313E59EC04ADFDF175529 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EEACC3AB0FCABBC22392C020 /* BigBrain Studio.app */,
+				C10000000000000000000008 /* BigBrain Capture.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		32C48BBFF23A258518E8985E /* BigBrain Studio */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A9EE4DA646FB7E7C48521379 /* Build configuration list for PBXNativeTarget "BigBrain Studio" */;
+			buildPhases = (
+				799C7D33044E635AF6C9081D /* Sources */,
+				5EF9B8D55FC57010A1D998CE /* Frameworks */,
+				88AD33764DAAF75AB6D721FE /* Resources */,
+				EBAE7F244CB585F5C53417D3 /* Bygg och signera lokal Python-runtime */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "BigBrain Studio";
+			productName = "BigBrain Studio";
+			productReference = EEACC3AB0FCABBC22392C020 /* BigBrain Studio.app */;
+			productType = "com.apple.product-type.application";
+		};
+		C1000000000000000000000C /* BigBrain Capture */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C1000000000000000000000B /* Build configuration list for PBXNativeTarget "BigBrain Capture" */;
+			buildPhases = (
+				C10000000000000000000007 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "BigBrain Capture";
+			productName = "BigBrain Capture";
+			productReference = C10000000000000000000008 /* BigBrain Capture.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		CBF7AFD277D788BA2359364C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 2600;
+			};
+			buildConfigurationList = CB3E2A7FB054CC2C399CC35B /* Build configuration list for PBXProject "BigBrain" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = sv;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				sv,
+				en,
+				Base,
+			);
+			mainGroup = ABE4B8E98CA46BCCC5C0B652;
+			productRefGroup = C34313E59EC04ADFDF175529 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				32C48BBFF23A258518E8985E /* BigBrain Studio */,
+				C1000000000000000000000C /* BigBrain Capture */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		88AD33764DAAF75AB6D721FE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D5159226CA75B235CD1B10C7 /* brain.py in Resources */,
+				FAF084D966F80AF3ED55FF23 /* network.py in Resources */,
+				A45CC0E308A2E20C434B38E6 /* public_source.py in Resources */,
+				2566C3B23B9AD28A074A2C7B /* word_import.py in Resources */,
+				556E1093873FD553293C3517 /* AppIcon.icns in Resources */,
+				0B5A713873FD553293C35170 /* AtlasBrain.mesh in Resources */,
+				4FC873795A63D7CCADFA5CF1 /* Skills in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		EBAE7F244CB585F5C53417D3 /* Bygg och signera lokal Python-runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Dependencies/python-3.12.16-arm64.tar.gz",
+				"$(SRCROOT)/Distribution/embed-python-runtime.sh",
+				"$(SRCROOT)/Distribution/Helper.entitlements",
+			);
+			name = "Bygg och signera lokal Python-runtime";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/PythonRuntime.framework",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\n\"$SRCROOT/Distribution/embed-python-runtime.sh\"   \"$SRCROOT/Dependencies/python-3.12.16-arm64.tar.gz\"   \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/PythonRuntime.framework\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		799C7D33044E635AF6C9081D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7285851CD9CCD70565E0E67A /* BigBrain.swift in Sources */,
+				000959C8CF746B8F1E43F273 /* Atlas.swift in Sources */,
+				3CE4372D9E4D2EECC753ED1E /* Distribution.swift in Sources */,
+				BDD21E2C08492976958F971E /* SpeechTranscription.swift in Sources */,
+				C20000000000000000000002 /* StudioEditor.swift in Sources */,
+				C20000000000000000000004 /* StudioMarkdown.swift in Sources */,
+				C20000000000000000000006 /* StudioExport.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C10000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C10000000000000000000005 /* BigBrainCaptureApp.swift in Sources */,
+				C10000000000000000000006 /* CaptureQueue.swift in Sources */,
+				C10000000000000000000020 /* SpeechTranscription.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		7A86DF8C2E7AA11E2BB1A021 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_REQUIRED = YES;
+				CODE_SIGN_ENTITLEMENTS = Distribution/AppSandbox.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Distribution/Xcode-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = local.bigbrain.studio.xcode;
+				PRODUCT_NAME = "BigBrain Studio";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		8EBDAE52765CBEAF444CD2CF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		9BC2985548E20337CD3089E9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		C10000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F7WU5T85DW;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Mobile/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = local.bigbrain.capture;
+				PRODUCT_NAME = "BigBrain Capture";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		C1000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F7WU5T85DW;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Mobile/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = local.bigbrain.capture;
+				PRODUCT_NAME = "BigBrain Capture";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		D2390B67C31237C8BDE19825 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_REQUIRED = YES;
+				CODE_SIGN_ENTITLEMENTS = Distribution/AppSandbox.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Distribution/Xcode-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = local.bigbrain.studio.xcode;
+				PRODUCT_NAME = "BigBrain Studio";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A9EE4DA646FB7E7C48521379 /* Build configuration list for PBXNativeTarget "BigBrain Studio" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D2390B67C31237C8BDE19825 /* Debug */,
+				7A86DF8C2E7AA11E2BB1A021 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C1000000000000000000000B /* Build configuration list for PBXNativeTarget "BigBrain Capture" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C10000000000000000000009 /* Debug */,
+				C1000000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CB3E2A7FB054CC2C399CC35B /* Build configuration list for PBXProject "BigBrain" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8EBDAE52765CBEAF444CD2CF /* Debug */,
+				9BC2985548E20337CD3089E9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = CBF7AFD277D788BA2359364C /* Project object */;
 }

@@ -27,11 +27,18 @@ struct StudioTextEditor: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-            guard let storage = textView.textStorage, charIndex < storage.length,
-                  let markup = storage.attribute(StudioCitation.attribute, at: charIndex, effectiveRange: nil) as? String,
-                  let citation = StudioCitation(markup: markup) else { return false }
-            parent.openCitation(citation)
-            return true
+            guard let storage = textView.textStorage, charIndex < storage.length else { return false }
+            if let markup = storage.attribute(StudioCitation.attribute, at: charIndex, effectiveRange: nil) as? String,
+               let citation = StudioCitation(markup: markup) {
+                parent.openCitation(citation)
+                return true
+            }
+            if let markup = storage.attribute(StudioWebLink.attribute, at: charIndex, effectiveRange: nil) as? String,
+               let webLink = StudioWebLink(markup: markup) {
+                NSWorkspace.shared.open(webLink.url)
+                return true
+            }
+            return false
         }
     }
 
@@ -130,14 +137,16 @@ struct StudioNoteView: View {
     @LocalState private var research: StudioResearchMode?
     @LocalState private var researchQuery = ""
     @LocalState private var researchFocusRequest = 0
+    @LocalState private var insertion: StudioInsertion?
 
-    init(model: BrainModel, hit: Hit, note: Note) {
+    init(model: BrainModel, hit: Hit, note: Note, citation: StudioCitation? = nil) {
         self.model = model
         self.hit = hit
         self.note = note
         _baseline = State(initialValue: note)
         _draft = State(initialValue: note.body)
         _draftRevision = State(initialValue: note.revision)
+        _research = State(initialValue: citation.map(StudioResearchMode.citation))
     }
 
     private var dirty: Bool { draft != baseline.body }
@@ -193,6 +202,20 @@ struct StudioNoteView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear(perform: restoreDraft)
         .onChange(of: model.editorCommandRequest) { _, _ in openResearch() }
+        .sheet(item: $insertion, onDismiss: { editor.view?.window?.makeFirstResponder(editor.view) }) { insertion in
+            switch insertion {
+            case .link(let label):
+                StudioLinkSheet(label: label) { link in
+                    editor.view?.insertWebLink(link)
+                    BrainHaptics.action()
+                }
+            case .table(let table, let range):
+                StudioTableSheet(table: table, editing: range != nil) { table in
+                    editor.view?.insertMarkdownBlock(table.markdown, replacing: range)
+                    BrainHaptics.action()
+                }
+            }
+        }
         .alert("Byt till den sparade versionen?", isPresented: $replaceDraft) {
             Button("Avbryt", role: .cancel) {}
             Button("Hämta sparad", role: .destructive) {
@@ -209,20 +232,12 @@ struct StudioNoteView: View {
                 Button("Tillbaka", systemImage: "chevron.left", action: model.closeEditor)
                     .keyboardShortcut("[", modifiers: .command)
                     .disabled(busy)
+                let appearance = model.appearance(for: hit)
+                Image(systemName: appearance.symbol.icon).foregroundStyle(appearance.accent.tint)
+                    .accessibilityHidden(true)
                 Text(hit.title).font(.title2.weight(.semibold)).lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button(model.studioFocus ? "Avsluta helskärm" : "Helskärm",
-                       systemImage: model.studioFocus ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
-                    if model.studioFocus {
-                        model.leaveStudioFocus()
-                    } else {
-                        model.enterStudioFocus(in: editor.view?.window)
-                        editor.view?.window?.makeFirstResponder(editor.view)
-                    }
-                }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
-                .disabled(busy)
                 Button("Spara") { commit(draft) }
                     .keyboardShortcut("s", modifiers: .command)
                     .disabled(!dirty || busy || conflicting)
@@ -294,9 +309,7 @@ struct StudioNoteView: View {
     }
 
     private func find(_ action: NSTextFinder.Action) {
-        let item = NSMenuItem()
-        item.tag = action.rawValue
-        editor.view?.performTextFinderAction(item)
+        editor.view?.showFindInterface(action)
     }
 
     private var outline: some View {
@@ -348,6 +361,8 @@ struct StudioNoteView: View {
         HStack(spacing: 8) {
             switch toolTab {
             case .start:
+                insertMenu
+                Divider().frame(height: 16)
                 Menu("Format") {
                     ForEach(StudioParagraph.allCases, id: \.self) { paragraph in
                         Button(paragraph.rawValue) { editor.view?.changeParagraph(paragraph) }
@@ -431,6 +446,38 @@ struct StudioNoteView: View {
             Spacer(minLength: 0)
         }
         .frame(minHeight: 28)
+    }
+
+    private var insertMenu: some View {
+        Menu {
+            Button("Webblänk", systemImage: "link") {
+                guard let view = editor.view, !view.selectedText.contains(where: \.isNewline) else {
+                    failure = "Markera länktext på en enda rad eller placera markören där länken ska infogas."
+                    return
+                }
+                insertion = .link(view.selectedText)
+            }
+            .keyboardShortcut("k", modifiers: [.command, .shift])
+            Button("Infoga eller redigera tabell", systemImage: "tablecells") {
+                let current = editor.view?.selectedTable
+                insertion = .table(current?.table ?? StudioTable(), current?.range)
+            }
+            Button("Datum och tid", systemImage: "calendar") {
+                guard let view = editor.view else { return }
+                view.insertText(Date.now.formatted(date: .long, time: .shortened), replacementRange: view.selectedRange())
+                view.window?.makeFirstResponder(view)
+                BrainHaptics.action()
+            }
+            Button("Avdelare", systemImage: "minus") {
+                editor.view?.insertMarkdownBlock("---")
+                BrainHaptics.action()
+            }
+        } label: {
+            Label("Infoga", systemImage: "plus")
+        }
+        .fixedSize()
+        .disabled(busy)
+        .accessibilityIdentifier("studio-insert-menu")
     }
 
     private func formatButton(_ paragraph: StudioParagraph, icon: String) -> some View {
@@ -561,6 +608,7 @@ struct StudioNoteView: View {
             defer { busy = false }
             do {
                 let updated: Note = try await Bridge.invoke(args, input: Data(text.utf8))
+                BrainHaptics.action()
                 baseline = updated
                 draftRevision = updated.revision
                 draft = updated.body
@@ -589,6 +637,86 @@ struct StudioNoteView: View {
                 }
             }
         }
+    }
+}
+
+private enum StudioInsertion: Identifiable {
+    case link(String)
+    case table(StudioTable, NSRange?)
+
+    var id: Int {
+        switch self {
+        case .link: 0
+        case .table: 1
+        }
+    }
+}
+
+private struct StudioLinkSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var addressFocused: Bool
+    @LocalState var label: String
+    @LocalState private var address = ""
+    let insert: (StudioWebLink) -> Void
+
+    var body: some View {
+        let link = StudioWebLink(title: label, address: address)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Infoga webblänk").font(.title2.weight(.semibold))
+            TextField("Länktext", text: $label)
+            TextField("Webbadress, t.ex. https://example.com", text: $address).focused($addressFocused)
+            HStack {
+                Spacer()
+                Button("Avbryt", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Infoga") {
+                    if let link { insert(link); dismiss() }
+                }.keyboardShortcut(.defaultAction).disabled(link == nil)
+            }
+        }
+        .padding(20).frame(width: 420)
+        .onAppear { addressFocused = !label.isEmpty }
+    }
+}
+
+private struct StudioTableSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @LocalState var table: StudioTable
+    let editing: Bool
+    let insert: (StudioTable) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Text(editing ? "Redigera tabell" : "Infoga tabell").font(.title2.weight(.semibold))
+            ScrollView([.horizontal, .vertical]) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(table.rows.indices, id: \.self) { row in
+                        HStack(spacing: 7) {
+                            ForEach(table.alignment.indices, id: \.self) { column in
+                                let label = row == 0 ? "Rubrik \(column + 1)" : "Rad \(row), kolumn \(column + 1)"
+                                TextField(row == 0 ? label : "Cell", text: $table.rows[row][column])
+                                    .font(row == 0 ? .body.weight(.semibold) : .body)
+                                    .frame(width: 145).accessibilityLabel(label)
+                            }
+                            if row > 0 {
+                                Button("Ta bort rad \(row)", systemImage: "minus.circle") { table.rows.remove(at: row) }
+                                    .labelStyle(.iconOnly).buttonStyle(.borderless)
+                            }
+                        }
+                    }
+                }.padding(2)
+            }
+            .frame(minHeight: 95, maxHeight: 250)
+            HStack {
+                Button("Rad", systemImage: "plus") { table.rows.append(Array(repeating: "", count: table.alignment.count)) }
+                    .disabled(table.rows.count >= 50)
+                Button("Kolumn", systemImage: "plus") { table.addColumn() }.disabled(table.alignment.count >= 12)
+                Button("Kolumn", systemImage: "minus") { table.removeColumn() }.disabled(table.alignment.count <= 1)
+                Spacer()
+                Button("Avbryt", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(editing ? "Uppdatera" : "Infoga") { insert(table); dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20).frame(width: 565)
     }
 }
 

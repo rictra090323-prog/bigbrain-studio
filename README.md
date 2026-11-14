@@ -17,9 +17,11 @@ Projektfilen, schemat och byggfasen har kontrollerats separat. Terminalbygget ha
 
 ## Prova Atlas och skrivläget
 
-Skriv en sökfras under **Atlas** för att visa upp till åtta träffar under sökfältet. Välj en träff för att förhandsvisa den i Atlas. Tryck Retur för att öppna träffarna i Biblioteket. Tryck Esc eller klicka utanför sökningen för att stänga listan. Till höger visas upp till tio senast öppnade anteckningar i det aktuella biblioteket. Innan du har öppnat någon visas ett urval ur orben. Klicka på en rad för att förhandsvisa anteckningen och välj **Tillbaka till listan** för att återvända.
+Skriv en sökfras under **Atlas** för att visa träffarna direkt under sökfältet. Rutan visar upp till åtta rader i taget och går att rulla. Välj en träff för att förhandsvisa den, tryck Retur för att söka i Biblioteket eller tryck Esc för att stänga listan.
 
-Välj **Öppna i redigeraren** i Atlas eller **Redigera** i Biblioteket. Anteckningen öppnas på en egen dokumentsida. **Tillbaka** återställer föregående vy med samma val. **Helskärm** (⇧⌘F) ger dokumentet hela skärmen.
+Välj **Sfär** eller **Hjärna** i Atlas. Noderna och deras kopplingar bygger upp formen. Dra för att rotera och nyp med två fingrar på styrplattan för att zooma. Till höger visas de senaste anteckningarna i det aktuella biblioteket eller ett urval ur nätet.
+
+Välj **Öppna i redigeraren** i Atlas eller **Redigera** i Biblioteket. Anteckningen öppnas på en egen dokumentsida. **Tillbaka** återställer föregående vy med samma val. Använd den gröna fönsterknappen för helskärm. Under **Infoga** kan du lägga till webblänkar, tabeller, datum och avdelare. Placera markören i en tabell och öppna tabellverktyget för att ändra celler, rader och kolumner.
 
 I **Start** finns rubriker, citat, fetstil, kursiv, understrykning, genomstrykning, punktlistor, numrerade listor och checklistor. Använd **Sök** för att hitta eller ersätta text. I **Visa** kan du öppna dokumentets rubriklista och hoppa mellan avsnitt. Tryck **⌘S** för att spara. Utkast lagras lokalt under arbetet.
 
@@ -69,7 +71,7 @@ Utvecklarbygget används för de automatiska bryggtesterna. Det har även stöd 
 ```sh
 ./build.sh "$PWD/BigBrain Agent Test.app"
 bridge="$PWD/BigBrain Agent Test.app/Contents/Resources/bigbrain"
-for test in smoke network_smoke word_smoke vault_isolation_smoke studio_sources_smoke; do
+for test in smoke network_smoke word_smoke vault_isolation_smoke studio_sources_smoke library_smoke; do
   python3 -B "Tests/$test.py" "$bridge"
 done
 python3 -B Tests/related_notes_eval.py "$bridge"

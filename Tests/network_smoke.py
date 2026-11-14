@@ -1,6 +1,7 @@
 """Check the native library migration, local learning and boundaries."""
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -18,6 +19,24 @@ for url in ("http://127.0.0.1", "http://2130706433", "http://169.254.169.254",
         raise AssertionError(f"Unsafe source accepted: {url}")
     except ValueError:
         pass
+
+spec = importlib.util.spec_from_file_location("network", bridge.parent / "network.py")
+network = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(network)
+
+sample = {key: {"path": f"notes/{key}.md", "title": title, "kind": "note", "file": ""}
+          for key, title in (("a", "Alpha"), ("b", "Beta"), ("c", "Permafrost sampling"),
+                             ("d", "Permafrost measurements"), ("e", "Chopin"), ("f", "Index"))}
+links = {("a", "f")}
+graph = network.layout(sample, links, [], [], "", 6, now=0)
+suggested = [edge for edge in graph["edges"] if edge["kind"] == "suggested"]
+assert [(edge["a"], edge["b"]) for edge in suggested] == [("c", "d")]
+assert graph["linked"] == 1 and graph["learned"] == 0
+assert next(node for node in graph["nodes"] if node["id"] == "c")["degree"] == 0
+
+focused = network.layout(sample, {("a", "b"), ("d", "f")}, [], [], "d", 4, now=0)
+assert any(edge["kind"] == "explicit" and (edge["a"], edge["b"]) == ("d", "f")
+           for edge in focused["edges"])
 
 with tempfile.TemporaryDirectory(prefix="bigbrain-native-test-") as tmp:
     root = Path(tmp)
@@ -51,7 +70,13 @@ with tempfile.TemporaryDirectory(prefix="bigbrain-native-test-") as tmp:
     graph = call("atlas", "--focus=note:notes/A.md")
     signals = {node["path"]: node["signal"] for node in graph["nodes"]}
     assert signals["notes/A.md"] > signals["notes/Beta.md"] > signals["notes/Gamma.md"] > 0
-    assert len({node["z"] for node in graph["nodes"]}) >= 2
+    note_nodes = [node for node in graph["nodes"] if node["kind"] == "note"]
+    assert len({node["z"] for node in note_nodes}) == len(note_nodes)
+    positions = {node["id"]: (node["x"], node["y"], node["z"]) for node in graph["nodes"]}
+    assert all(0 < math.sqrt(x*x + y*y + z*z) < 1 for x, y, z in positions.values())
+    refocused = call("atlas", "--focus=note:notes/Gamma.md")
+    assert all(positions[node["id"]] == (node["x"], node["y"], node["z"])
+               for node in refocused["nodes"] if node["id"] in positions)
     edges = [edge for edge in graph["edges"] if edge["kind"] == "explicit"]
     assert {(edge["a"], edge["b"]) for edge in edges} >= {("note:notes/A.md", "note:notes/Beta.md"), ("note:notes/Beta.md", "note:notes/Gamma.md")}
 

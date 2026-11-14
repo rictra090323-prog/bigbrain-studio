@@ -78,16 +78,117 @@ struct StudioCitation: Equatable {
     func attributed(paragraph: StudioParagraph) -> NSAttributedString {
         var attributes = StudioMarkdown.style(paragraph)
         attributes[Self.attribute] = markup
+        attributes[StudioMarkdown.linkMarkup] = markup
         attributes[.link] = relativePath
         return NSAttributedString(string: title, attributes: attributes)
+    }
+}
+
+struct StudioWebLink {
+    static let attribute = NSAttributedString.Key("BigBrainWebLink")
+    static let pattern = #"(\[([^\[\]\n]+)\]\(<(https?://[^<>\s]+)>\))"#
+    private static let expression = try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    let markup: String
+    let title: String
+    let url: URL
+
+    init?(markup: String) {
+        let text = markup as NSString
+        let range = NSRange(location: 0, length: text.length)
+        guard let match = Self.expression.firstMatch(in: markup, range: range), match.range == range,
+              let url = URL(string: text.substring(with: match.range(at: 3))), url.host?.isEmpty == false,
+              url.user == nil, url.password == nil else { return nil }
+        self.markup = markup
+        title = text.substring(with: match.range(at: 2))
+        self.url = url
+    }
+
+    init?(title: String, address: String) {
+        let label = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { return nil }
+        self.init(markup: "[\(label)](<\(address)>)")
+    }
+
+    func attributed(paragraph: StudioParagraph) -> NSAttributedString {
+        var attributes = StudioMarkdown.style(paragraph)
+        attributes[Self.attribute] = markup
+        attributes[StudioMarkdown.linkMarkup] = markup
+        attributes[.link] = url
+        return NSAttributedString(string: title, attributes: attributes)
+    }
+}
+
+struct StudioTable {
+    var rows = [["", ""], ["", ""]]
+    var alignment = ["---", "---"]
+
+    init() {}
+
+    init?(markdown: String) {
+        let lines = markdown.components(separatedBy: "\n")
+        let parsed = lines.compactMap(Self.cells(in:))
+        guard parsed.count == lines.count, parsed.count >= 2, let first = parsed.first,
+              !first.isEmpty, parsed.allSatisfy({ $0.count == first.count }),
+              parsed[1].allSatisfy({ $0.range(of: #"^:?-{3,}:?$"#, options: .regularExpression) != nil }) else { return nil }
+        rows = [first] + Array(parsed.dropFirst(2))
+        alignment = parsed[1]
+    }
+
+    var markdown: String {
+        func line(_ cells: [String]) -> String {
+            "| " + cells.map(Self.escapePipes).joined(separator: " | ") + " |"
+        }
+        return ([line(rows[0]), line(alignment)] + rows.dropFirst().map(line)).joined(separator: "\n")
+    }
+
+    mutating func addColumn() {
+        alignment.append("---")
+        for row in rows.indices { rows[row].append("") }
+    }
+
+    mutating func removeColumn() {
+        guard alignment.count > 1 else { return }
+        alignment.removeLast()
+        for row in rows.indices { rows[row].removeLast() }
+    }
+
+    private static func cells(in line: String) -> [String]? {
+        let clean = line.trimmingCharacters(in: .whitespaces)
+        guard clean.count > 1, clean.first == "|", clean.last == "|" else { return nil }
+        var cells = [""]
+        var escaped = false
+        for character in clean.dropFirst().dropLast() {
+            if character == "|" && !escaped {
+                cells.append("")
+            } else {
+                cells[cells.count - 1].append(character)
+            }
+            escaped = character == "\\" && !escaped
+        }
+        return cells.map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private static func escapePipes(_ cell: String) -> String {
+        var result = ""
+        var escaped = false
+        for character in cell.trimmingCharacters(in: .whitespacesAndNewlines) {
+            if character == "|" && !escaped { result.append("\\") }
+            result.append(character.isNewline ? " " : character)
+            escaped = character == "\\" && !escaped
+        }
+        return result
     }
 }
 
 enum StudioMarkdown {
     static let block = NSAttributedString.Key("BigBrainParagraph")
     static let emphasis = NSAttributedString.Key("BigBrainEmphasis")
+    static let linkMarkup = NSAttributedString.Key("BigBrainLinkMarkup")
     static let bold = 1, italic = 2, underline = 4, strike = 8
     private static let spans = try! NSRegularExpression(pattern: #"(?<!\*)(\*{1,3})([^*]+?)\1(?!\*)|<u>([^<>]+)</u>|(?<!~)~~([^~]+)~~(?!~)"#)
+    private static let links = try! NSRegularExpression(
+        pattern: StudioCitation.pattern.pattern + "|" + StudioWebLink.pattern, options: [.caseInsensitive])
 
     static func style(_ paragraph: StudioParagraph = .text, _ marks: Int = 0) -> [NSAttributedString.Key: Any] {
         let size: CGFloat = switch paragraph {
@@ -130,7 +231,7 @@ enum StudioMarkdown {
             let taskMarker = ["- [ ] ", "- [x] "].first(where: line.hasPrefix)
             let inlineSource = taskMarker.map { line.dropFirst($0.count) } ?? line.dropFirst(line.hasPrefix("> ") ? 2 : 0)
             let inlineMarkup = inlineSource.replacingOccurrences(of: "<u>", with: "").replacingOccurrences(of: "</u>", with: "")
-            let markup = StudioCitation.pattern.stringByReplacingMatches(in: inlineMarkup,
+            let markup = links.stringByReplacingMatches(in: inlineMarkup,
                 range: NSRange(location: 0, length: (inlineMarkup as NSString).length), withTemplate: "")
             let code = frontMatter || fence != nil || marker != nil
             let literal = code || markup.contains { "[]<>_|`\\".contains($0) }
@@ -154,14 +255,14 @@ enum StudioMarkdown {
             if code {
                 result.append(NSAttributedString(string: content, attributes: style(kind)))
             } else {
-                appendCitations(content, paragraph: kind, literal: literal, to: result)
+                appendLinks(content, paragraph: kind, literal: literal, to: result)
             }
         }
         return write(result) == source ? result : NSAttributedString(string: source, attributes: style())
     }
 
-    private static func appendCitations(_ content: String, paragraph: StudioParagraph, literal: Bool,
-                                        to result: NSMutableAttributedString) {
+    private static func appendLinks(_ content: String, paragraph: StudioParagraph, literal: Bool,
+                                    to result: NSMutableAttributedString) {
         let string = content as NSString
         var start = 0
         func appendText(_ text: String) {
@@ -171,10 +272,13 @@ enum StudioMarkdown {
                 appendInline(text, paragraph: paragraph, to: result)
             }
         }
-        for match in StudioCitation.pattern.matches(in: content, range: NSRange(location: 0, length: string.length)) {
-            guard let citation = StudioCitation(markup: string.substring(with: match.range)) else { continue }
+        for match in links.matches(in: content, range: NSRange(location: 0, length: string.length)) {
+            let markup = string.substring(with: match.range)
+            let link = StudioCitation(markup: markup)?.attributed(paragraph: paragraph)
+                ?? StudioWebLink(markup: markup)?.attributed(paragraph: paragraph)
+            guard let link else { continue }
             appendText(string.substring(with: NSRange(location: start, length: match.range.location - start)))
-            result.append(citation.attributed(paragraph: paragraph))
+            result.append(link)
             start = NSMaxRange(match.range)
         }
         appendText(string.substring(from: start))
@@ -214,13 +318,13 @@ enum StudioMarkdown {
             var result = kind.prefix + marker
             if kind == .checklist && !marker.isEmpty { result = marker == "☑ " ? "- [x] " : "- [ ] " }
             let contentRange = NSRange(location: offset + markerLength, length: length - markerLength)
-            text.enumerateAttribute(StudioCitation.attribute, in: contentRange) { value, citationRange, _ in
-                if let markup = value as? String, let citation = StudioCitation(markup: markup),
-                   whole.substring(with: citationRange) == citation.title {
+            text.enumerateAttribute(linkMarkup, in: contentRange) { value, linkRange, _ in
+                if let markup = value as? String,
+                   whole.substring(with: linkRange) == (StudioCitation(markup: markup)?.title ?? StudioWebLink(markup: markup)?.title) {
                     result += markup
                     return
                 }
-                text.enumerateAttribute(emphasis, in: citationRange) { value, range, _ in
+                text.enumerateAttribute(emphasis, in: linkRange) { value, range, _ in
                     let content = whole.substring(with: range)
                     let marks = value as? Int ?? 0
                     let stars = String(repeating: "*", count: (marks & bold == 0 ? 0 : 2) + (marks & italic == 0 ? 0 : 1))
@@ -241,6 +345,13 @@ enum StudioMarkdown {
 }
 
 final class StudioTextView: NSTextView {
+    func showFindInterface(_ action: NSTextFinder.Action) {
+        window?.makeFirstResponder(self)
+        let item = NSMenuItem()
+        item.tag = action.rawValue
+        performTextFinderAction(item)
+    }
+
     var markdownMode = false
 
     override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
@@ -294,6 +405,8 @@ final class StudioTextView: NSTextView {
         replacement.enumerateAttributes(in: formatted) { attributes, span, _ in
             var style = StudioMarkdown.style(kind, attributes[StudioMarkdown.emphasis] as? Int ?? 0)
             style[StudioCitation.attribute] = attributes[StudioCitation.attribute]
+            style[StudioWebLink.attribute] = attributes[StudioWebLink.attribute]
+            style[StudioMarkdown.linkMarkup] = attributes[StudioMarkdown.linkMarkup]
             style[.link] = attributes[.link]
             replacement.setAttributes(style, range: span)
         }
@@ -330,7 +443,7 @@ final class StudioTextView: NSTextView {
                 allMarked = allMarked && ((value as? Int ?? 0) & flag != 0)
             }
             storage.enumerateAttributes(in: range) { attributes, part, _ in
-                guard attributes[StudioCitation.attribute] == nil else { return }
+                guard attributes[.link] == nil else { return }
                 let kind = StudioMarkdown.paragraph(attributes[StudioMarkdown.block])
                 let marks = attributes[StudioMarkdown.emphasis] as? Int ?? 0
                 next.setAttributes(StudioMarkdown.style(kind, allMarked ? marks & ~flag : marks | flag), range: part)
@@ -362,6 +475,66 @@ final class StudioTextView: NSTextView {
         next.replaceCharacters(in: selection, with: replacement)
         replace(next, selection: NSRange(location: offset + replacement.length, length: 0))
         typingAttributes = style
+    }
+
+    var selectedText: String {
+        (string as NSString).substring(with: selectedRange())
+    }
+
+    var selectedTable: (table: StudioTable, range: NSRange)? {
+        let text = string as NSString
+        let line = lineRange
+        func isTableLine(_ range: NSRange) -> Bool {
+            text.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("|")
+        }
+        guard isTableLine(line) else { return nil }
+        var start = line.location
+        var end = NSMaxRange(line)
+        while start > 0 {
+            let previous = text.lineRange(for: NSRange(location: start - 1, length: 0))
+            guard isTableLine(previous) else { break }
+            start = previous.location
+        }
+        while end < text.length {
+            let following = text.lineRange(for: NSRange(location: end, length: 0))
+            guard isTableLine(following) else { break }
+            end = NSMaxRange(following)
+        }
+        if end > start && text.character(at: end - 1) == 10 { end -= 1 }
+        let range = NSRange(location: start, length: end - start)
+        guard let table = StudioTable(markdown: text.substring(with: range)) else { return nil }
+        return (table, range)
+    }
+
+    func insertWebLink(_ link: StudioWebLink) {
+        guard let storage = textStorage, !selectedText.contains(where: \.isNewline) else { return }
+        let range = selectedRange()
+        if markdownMode {
+            insertText(link.markup, replacementRange: range)
+        } else {
+            let kind = currentParagraph
+            let next = NSMutableAttributedString(attributedString: storage)
+            let replacement = link.attributed(paragraph: kind)
+            next.replaceCharacters(in: range, with: replacement)
+            replace(next, selection: NSRange(location: range.location + replacement.length, length: 0))
+            typingAttributes = StudioMarkdown.style(kind)
+        }
+        window?.makeFirstResponder(self)
+    }
+
+    func insertMarkdownBlock(_ markdown: String, replacing existing: NSRange? = nil) {
+        guard let storage = textStorage else { return }
+        let whole = string as NSString
+        let range = existing ?? NSRange(location: NSMaxRange(lineRange), length: 0)
+        let before = existing == nil && range.location > 0
+            ? (whole.character(at: range.location - 1) == 10 ? "\n" : "\n\n") : ""
+        let after = existing == nil && range.location < storage.length ? "\n\n" : ""
+        let content = before + markdown + after
+        let next = NSMutableAttributedString(attributedString: storage)
+        next.replaceCharacters(in: range, with: markdownMode ? NSAttributedString(string: content, attributes: typingAttributes)
+                               : StudioMarkdown.read(content))
+        replace(next, selection: NSRange(location: range.location + (content as NSString).length, length: 0))
+        window?.makeFirstResponder(self)
     }
 
     private func needsSpace(nextTo codeUnit: UInt16, punctuation: String) -> Bool {
