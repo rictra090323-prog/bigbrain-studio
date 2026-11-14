@@ -245,6 +245,12 @@ private struct OrbitMotion {
     }
 }
 
+private enum AtlasHaptics {
+    static func step() {
+        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+    }
+}
+
 private struct AtlasOrbit: View {
     let atlas: AtlasSnapshot?
     let selected: String?
@@ -259,8 +265,12 @@ private struct AtlasOrbit: View {
     @LocalState private var camera = OrbitCamera()
     @LocalState private var motion: OrbitMotion?
     @LocalState private var dragOrigin: OrbitCamera?
-    @LocalState private var lastTick = Date.distantPast
+    @LocalState private var lastTick = -Double.infinity
+    @LocalState private var accentTask: Task<Void, Never>?
     @LocalState private var lastDetent = SIMD2<Double>.zero
+    @LocalState private var rotationSteps = 0
+    @LocalState private var pinchTravel = 0.0
+    @GestureState private var pinching = false
     @LocalState private var cloud = AtlasCloud(nodes: [])
     @LocalState private var edges: [AtlasEdge] = []
     @LocalState private var nodeArrivals: [String: Date] = [:]
@@ -305,12 +315,12 @@ private struct AtlasOrbit: View {
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 4).onChanged(rotate).onEnded(finishRotation))
                 .simultaneousGesture(MagnifyGesture()
+                    .updating($pinching) { _, active, _ in active = true }
                     .onChanged { value in
                         let scale = Double(value.magnification)
-                        zoom(by: scale / lastPinch, animated: false)
+                        zoom(by: scale / lastPinch, animated: false, pinch: true)
                         lastPinch = scale
-                    }
-                    .onEnded { _ in lastPinch = 1 })
+                    })
                 .simultaneousGesture(SpatialTapGesture().onEnded { value in
                     if let entry = hit(at: value.location, size: geometry.size) { choose(entry.node) }
                 })
@@ -323,6 +333,16 @@ private struct AtlasOrbit: View {
                 }
                 .accessibilityHidden(true)
         }
+        .onChange(of: pinching) { _, active in
+            if !active {
+                lastPinch = 1
+                pinchTravel = 0
+            }
+        }
+        .onChange(of: haptics) { _, enabled in
+            if !enabled { accentTask?.cancel() }
+        }
+        .onDisappear { accentTask?.cancel() }
         .onChange(of: nodes, initial: true) { _, new in
             let now = Date.now
             let known = Set(cloud.entries.map { $0.node.id })
@@ -431,7 +451,7 @@ private struct AtlasOrbit: View {
         animate(for: duration + 0.05)
     }
 
-    private func zoom(by factor: Double, animated: Bool) {
+    private func zoom(by factor: Double, animated: Bool, pinch: Bool = false) {
         var target = animated ? camera : currentCamera()
         let prior = target.zoom
         let range = OrbitCamera.zoomRange
@@ -441,7 +461,20 @@ private struct AtlasOrbit: View {
             move(to: target, duration: 0.32)
         } else {
             let boundary = OrbitCamera.homeDistance / 0.80
-            if (prior < boundary) != (target.zoom < boundary) { tick(at: .now) }
+            let entersCloud = (prior < boundary) != (target.zoom < boundary)
+            if pinch {
+                pinchTravel += log(target.zoom / prior)
+                let step = log(1.13)
+                let crossed = (pinchTravel / step).rounded(.towardZero)
+                let limit = target.zoom == range.lowerBound || target.zoom == range.upperBound
+                if crossed != 0 || entersCloud || limit {
+                    if tick(accent: entersCloud || limit) {
+                        pinchTravel = limit ? 0 : pinchTravel - crossed * step
+                    }
+                }
+            } else if entersCloud {
+                tick()
+            }
             camera = target
             motion = nil
             hovered = nil
@@ -451,10 +484,19 @@ private struct AtlasOrbit: View {
     }
 
     @discardableResult
-    private func tick(at date: Date) -> Bool {
-        guard haptics, date.timeIntervalSince(lastTick) >= 0.045 else { return false }
-        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-        lastTick = date
+    private func tick(accent: Bool = false) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard haptics, now - lastTick >= 0.065 else { return false }
+        lastTick = now
+        AtlasHaptics.step()
+        if accent {
+            accentTask?.cancel()
+            accentTask = Task { @MainActor in
+                do { try await Task.sleep(for: .milliseconds(34)) } catch { return }
+                guard !Task.isCancelled else { return }
+                AtlasHaptics.step()
+            }
+        }
         return true
     }
 
@@ -463,6 +505,7 @@ private struct AtlasOrbit: View {
             dragOrigin = currentCamera()
             motion = nil
             lastDetent = .zero
+            rotationSteps = 0
             hovered = nil
         }
         guard let origin = dragOrigin else { return }
@@ -474,8 +517,11 @@ private struct AtlasOrbit: View {
         let step = 0.13
         let travel = (position - lastDetent) / step
         let crossed = SIMD2(travel.x.rounded(.towardZero), travel.y.rounded(.towardZero))
-        if crossed != .zero, tick(at: .now) {
+        guard crossed != .zero else { return }
+        let nextStep = rotationSteps + 1
+        if tick(accent: nextStep.isMultiple(of: 4)) {
             lastDetent += crossed * step
+            rotationSteps = nextStep
         }
     }
 
@@ -624,7 +670,7 @@ private struct AtlasOrbit: View {
     private func orbitButton(_ icon: String, _ label: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button {
             action()
-            tick(at: .now)
+            tick()
         } label: {
             Image(systemName: icon).font(.system(size: 12, weight: .semibold)).frame(width: 31, height: 31)
                 .contentShape(Circle())
@@ -873,24 +919,11 @@ struct AtlasView: View {
             .allowsHitTesting(false)
         }
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 3) {
+            HStack(spacing: 6) {
                 if AtlasBrainSurface.bundled != nil {
-                    ForEach(AtlasShape.allCases, id: \.self) { form in
-                        Button {
-                            guard shape != form else { return }
-                            shape = form
-                            if haptics { BrainHaptics.selection() }
-                        } label: {
-                            Text(form.title)
-                                .font(.system(size: 12, weight: shape == form ? .semibold : .medium))
-                                .padding(.horizontal, 11)
-                                .frame(minWidth: 51, minHeight: 31)
-                                .background(.white.opacity(shape == form ? 0.19 : 0), in: Capsule())
-                        }
-                        .buttonStyle(AtlasResultStyle(capsule: true))
-                        .accessibilityAddTraits(shape == form ? [.isSelected] : [])
+                    AtlasShapeSwitch(selection: $shape) {
+                        if haptics { BrainHaptics.selection() }
                     }
-                    Divider().frame(height: 14).padding(.horizontal, 2)
                 }
                 Button {
                     inspectorVisible.toggle()
@@ -904,17 +937,15 @@ struct AtlasView: View {
                 .buttonStyle(AtlasResultStyle(capsule: true))
                 .accessibilityLabel(inspectorVisible ? "Dölj sidopanel" : "Visa sidopanel")
                 .help(inspectorVisible ? "Dölj sidopanel" : "Visa sidopanel")
+                .padding(4)
+                .brainGlass(Capsule())
             }
-            .padding(4)
-            .brainGlass(Capsule())
             .padding(16)
         }
         .overlay(alignment: .bottomLeading) {
             Menu {
                 Toggle("Haptisk återkoppling", isOn: $haptics)
-                Button("Testa haptik") {
-                    NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-                }
+                Button("Testa haptik", action: AtlasHaptics.step)
                 .disabled(!haptics)
             } label: {
                 Image(systemName: "ellipsis")
@@ -1147,6 +1178,54 @@ struct AtlasView: View {
             Text(value.formatted()).font(.system(size: 12, weight: .semibold, design: .monospaced))
             Text(label).foregroundStyle(.white.opacity(0.59)).font(.system(size: 11))
         }
+    }
+}
+
+private struct AtlasShapeSwitch: View {
+    @Binding var selection: AtlasShape
+    let onChange: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let segmentWidth: CGFloat = 58
+    private let segmentHeight: CGFloat = 31
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Capsule()
+                .fill(atlasInk.opacity(0.36))
+                .overlay { Capsule().strokeBorder(.white.opacity(0.15)) }
+
+            Color.clear
+                .frame(width: segmentWidth, height: segmentHeight)
+                .brainGlass(Capsule(), tint: .white.opacity(0.22))
+                .overlay { Capsule().strokeBorder(.white.opacity(0.16)) }
+                .offset(x: selection == .sphere ? 3 : 3 + segmentWidth)
+                .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78), value: selection)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+
+            HStack(spacing: 0) {
+                ForEach(AtlasShape.allCases, id: \.self) { form in
+                    Button {
+                        guard selection != form else { return }
+                        selection = form
+                        onChange()
+                    } label: {
+                        Text(form.title)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(selection == form ? 1 : 0.72))
+                            .frame(width: segmentWidth, height: segmentHeight)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(AtlasResultStyle(capsule: true))
+                    .accessibilityAddTraits(selection == form ? [.isSelected] : [])
+                }
+            }
+            .padding(3)
+        }
+        .fixedSize()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Form i Atlas")
     }
 }
 
