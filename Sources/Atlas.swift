@@ -78,13 +78,6 @@ private enum AtlasShape: String, CaseIterable {
         case .brain: "Hjärna"
         }
     }
-
-    var icon: String {
-        switch self {
-        case .sphere: "globe"
-        case .brain: "brain.head.profile"
-        }
-    }
 }
 
 private struct OrbitCamera {
@@ -213,7 +206,7 @@ private struct AtlasCloud {
     let entries: [Entry]
 
     init(nodes: [AtlasNode]) {
-        let moteCount = min(96, max(18, 3200 / max(1, nodes.count)))
+        let moteCount = min(40, max(5, 1250 / max(1, nodes.count)))
         entries = nodes.map { node in
             let point = SIMD3(node.x, node.y, node.z)
             let brain = AtlasBrainSurface.bundled?.position(for: point) ?? point
@@ -227,7 +220,7 @@ private struct AtlasCloud {
                 let height = sample() * 2 - 1
                 let angle = sample() * 2 * .pi
                 let ring = sqrt(1 - height * height)
-                let distance = 0.30 * pow(sample(), 0.68)
+                let distance = 0.22 * pow(sample(), 0.68)
                 return Mote(offset: SIMD3(ring * cos(angle), height, ring * sin(angle)) * distance,
                             radius: 0.40 + 0.61 * sample(), brightness: (0.32 + 0.68 * sample()) * (1 - distance * 1.1))
             }
@@ -267,7 +260,7 @@ private struct AtlasOrbit: View {
     @LocalState private var motion: OrbitMotion?
     @LocalState private var dragOrigin: OrbitCamera?
     @LocalState private var lastTick = Date.distantPast
-    @LocalState private var tickTravel = 0.0
+    @LocalState private var lastDetent = SIMD2<Double>.zero
     @LocalState private var cloud = AtlasCloud(nodes: [])
     @LocalState private var edges: [AtlasEdge] = []
     @LocalState private var nodeArrivals: [String: Date] = [:]
@@ -457,17 +450,19 @@ private struct AtlasOrbit: View {
         }
     }
 
-    private func tick(at date: Date) {
-        guard haptics, date.timeIntervalSince(lastTick) >= 0.14 else { return }
-        BrainHaptics.selection()
+    @discardableResult
+    private func tick(at date: Date) -> Bool {
+        guard haptics, date.timeIntervalSince(lastTick) >= 0.045 else { return false }
+        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
         lastTick = date
+        return true
     }
 
     private func rotate(_ value: DragGesture.Value) {
         if dragOrigin == nil {
             dragOrigin = currentCamera()
             motion = nil
-            tickTravel = 0
+            lastDetent = .zero
             hovered = nil
         }
         guard let origin = dragOrigin else { return }
@@ -475,10 +470,12 @@ private struct AtlasOrbit: View {
         target.yaw += Double(value.translation.width) * 0.0075
         target.tilt = min(1.52, max(-1.52, origin.tilt + Double(value.translation.height) * 0.0075))
         camera = target
-        let travel = hypot(target.yaw - origin.yaw, target.tilt - origin.tilt)
-        if abs(travel - tickTravel) >= 0.33 {
-            tick(at: value.time)
-            tickTravel = travel
+        let position = SIMD2(target.yaw - origin.yaw, target.tilt - origin.tilt)
+        let step = 0.13
+        let travel = (position - lastDetent) / step
+        let crossed = SIMD2(travel.x.rounded(.towardZero), travel.y.rounded(.towardZero))
+        if crossed != .zero, tick(at: .now) {
+            lastDetent += crossed * step
         }
     }
 
@@ -552,7 +549,7 @@ private struct AtlasOrbit: View {
             guard let color = colors[group] else { continue }
             let emphasis = group.hasSuffix("/dim") ? 0.52 : 1.0
             for (band, path) in bands.enumerated() where !path.isEmpty {
-                context.fill(path, with: .color(color.opacity(Double(band) * 0.13 * emphasis)))
+                context.fill(path, with: .color(color.opacity(Double(band) * 0.075 * emphasis)))
             }
         }
 
@@ -566,14 +563,17 @@ private struct AtlasOrbit: View {
             let end = start + (view[b] - start) * amount
             guard let (from, to) = projection.segment(start, end) else { continue }
             let learned = edge.kind == "learned"
-            let tint = learned ? atlasLilac : entries[a].node.tint
-            let opacity = (active ? 0.78 : (selected == nil ? 0.27 : 0.10) * density) * depthFade(max(start.z, end.z))
+            let suggested = edge.kind == "suggested"
+            let tint = suggested ? Color.white : learned ? atlasLilac : entries[a].node.tint
+            let overviewOpacity = suggested ? 0.24 : 0.27 * density
+            let opacity = (active ? 0.78 : selected == nil ? overviewOpacity : 0.10 * density)
+                * depthFade(max(start.z, end.z))
             var path = Path()
             path.move(to: from)
             path.addLine(to: to)
             context.stroke(path, with: .color(tint.opacity(opacity)),
                            style: StrokeStyle(lineWidth: active ? 1.35 : 0.65, lineCap: .round,
-                                              dash: learned ? [3, 4] : []))
+                                              dash: suggested ? [1, 4] : learned ? [3, 4] : []))
         }
 
         let ordered = entries.indices.sorted { view[$0].z > view[$1].z }
@@ -627,9 +627,9 @@ private struct AtlasOrbit: View {
             tick(at: .now)
         } label: {
             Image(systemName: icon).font(.system(size: 12, weight: .semibold)).frame(width: 31, height: 31)
-                .contentShape(Rectangle())
+                .contentShape(Circle())
         }
-        .buttonStyle(AtlasResultStyle())
+        .buttonStyle(AtlasResultStyle(capsule: true))
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.35)
         .accessibilityLabel(label)
@@ -689,7 +689,10 @@ struct AtlasView: View {
     private var node: AtlasNode? { graph?.nodes.first { $0.id == model.selected?.id } }
     private var links: [AtlasEdge] {
         guard let id = node?.id else { return [] }
-        return (graph?.edges ?? []).filter { $0.a == id || $0.b == id }.sorted { $0.weight > $1.weight }
+        return (graph?.edges ?? []).filter { $0.a == id || $0.b == id }.sorted {
+            if ($0.kind == "suggested") != ($1.kind == "suggested") { return $1.kind == "suggested" }
+            return $0.weight > $1.weight
+        }
     }
 
     var body: some View {
@@ -735,10 +738,13 @@ struct AtlasView: View {
     private var masthead: some View {
         let term = searchPresented ? model.atlasSearchTerm : ""
         return VStack(alignment: .leading, spacing: 11) {
-            WorkspaceTitle("Atlas")
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { dismissSearch() }
+            HStack(spacing: 12) {
+                Text("Atlas").font(.system(size: 36, weight: .medium)).tracking(-1.8)
+                    .accessibilityAddTraits(.isHeader)
+                    .onTapGesture { dismissSearch() }
+                Spacer()
+                WorkspaceActions(model: model)
+            }
             QueryBox(query: $model.query, placeholder: "Sök med ord, begrepp eller en fråga…",
                      autofocus: false, prominent: true, focus: $searchFocused,
                      attachedResults: visibleSearchState != nil, action: model.searchFromAtlas)
@@ -869,15 +875,22 @@ struct AtlasView: View {
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 3) {
                 if AtlasBrainSurface.bundled != nil {
-                    Picker("Form i Atlas", selection: $shape) {
-                        ForEach(AtlasShape.allCases, id: \.self) { form in
-                            Label(form.title, systemImage: form.icon).tag(form)
+                    ForEach(AtlasShape.allCases, id: \.self) { form in
+                        Button {
+                            guard shape != form else { return }
+                            shape = form
+                            if haptics { BrainHaptics.selection() }
+                        } label: {
+                            Text(form.title)
+                                .font(.system(size: 12, weight: shape == form ? .semibold : .medium))
+                                .padding(.horizontal, 11)
+                                .frame(minWidth: 51, minHeight: 31)
+                                .background(.white.opacity(shape == form ? 0.19 : 0), in: Capsule())
                         }
+                        .buttonStyle(AtlasResultStyle(capsule: true))
+                        .accessibilityAddTraits(shape == form ? [.isSelected] : [])
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 132)
-                    .onChange(of: shape) { _, _ in if haptics { BrainHaptics.selection() } }
+                    Divider().frame(height: 14).padding(.horizontal, 2)
                 }
                 Button {
                     inspectorVisible.toggle()
@@ -888,7 +901,7 @@ struct AtlasView: View {
                         .foregroundStyle(inspectorVisible ? Color.white : Color.secondary)
                         .frame(width: 31, height: 31)
                 }
-                .buttonStyle(AtlasResultStyle())
+                .buttonStyle(AtlasResultStyle(capsule: true))
                 .accessibilityLabel(inspectorVisible ? "Dölj sidopanel" : "Visa sidopanel")
                 .help(inspectorVisible ? "Dölj sidopanel" : "Visa sidopanel")
             }
@@ -899,6 +912,10 @@ struct AtlasView: View {
         .overlay(alignment: .bottomLeading) {
             Menu {
                 Toggle("Haptisk återkoppling", isOn: $haptics)
+                Button("Testa haptik") {
+                    NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+                }
+                .disabled(!haptics)
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 13, weight: .semibold))
@@ -1063,7 +1080,8 @@ struct AtlasView: View {
                 ForEach(links.prefix(10)) { edge in
                     let neighborID = edge.a == node.id ? edge.b : edge.a
                     if let neighbor = graph?.nodes.first(where: { $0.id == neighborID }) {
-                        row(neighbor.hit, subtitle: edge.kind == "learned" ? "Inlärt samband" : "Dokumentlänk")
+                        row(neighbor.hit, subtitle: edge.kind == "suggested" ? "Föreslagen koppling"
+                            : edge.kind == "learned" ? "Inlärt samband" : "Dokumentlänk")
                     }
                 }
             }
@@ -1109,6 +1127,12 @@ struct AtlasView: View {
             }
             metric(graph?.linked ?? 0, "länkar")
             metric(graph?.learned ?? 0, "inlärda")
+            if graph?.edges.contains(where: { $0.kind == "suggested" }) == true {
+                Label("Punktlinjer visar förslag", systemImage: "ellipsis")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .help("Förslagen bygger på gemensamma titelord eller en gemensam undermapp.")
+            }
             Spacer()
             if model.atlasBusy { ProgressView().controlSize(.small) }
             if let pending = model.dashboard?.proposals.filter({ $0.status == "pending" }).count, pending > 0 {
@@ -1127,20 +1151,23 @@ struct AtlasView: View {
 }
 
 private struct AtlasResultStyle: ButtonStyle {
+    var capsule = false
+
     func makeBody(configuration: Configuration) -> some View {
-        AtlasResultRow(label: configuration.label, pressed: configuration.isPressed)
+        AtlasResultRow(label: configuration.label, pressed: configuration.isPressed, capsule: capsule)
     }
 
     private struct AtlasResultRow<Label: View>: View {
         let label: Label
         let pressed: Bool
+        let capsule: Bool
         @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @LocalState private var hovering = false
 
         var body: some View {
             label
                 .background(Color.accentColor.opacity(pressed ? 0.64 : hovering ? 0.30 : 0),
-                            in: RoundedRectangle(cornerRadius: 10))
+                            in: RoundedRectangle(cornerRadius: capsule ? 100 : 10))
                 .onHover { hovering = $0 }
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hovering)
         }

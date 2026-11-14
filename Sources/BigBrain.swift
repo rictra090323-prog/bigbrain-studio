@@ -1074,12 +1074,22 @@ struct Header: View {
             if model.section != .atlas && model.section != .search {
                 ActionButton(title: "Sök  ⌘K", icon: "magnifyingglass") { model.show(.search) }
             }
+            WorkspaceActions(model: model)
+        }
+        .padding(.horizontal, 22).padding(.top, 20).padding(.bottom, 8)
+    }
+}
+
+struct WorkspaceActions: View {
+    @ObservedObject var model: BrainModel
+
+    var body: some View {
+        HStack(spacing: 12) {
             if #available(macOS 26.0, *) {
                 ActionButton(title: "Transkribera", icon: "waveform") { model.showingTranscription = true }
             }
             ActionButton(title: "Fånga  ⌘N", icon: "plus", primary: true) { model.showingCapture = true }
         }
-        .padding(.horizontal, 22).padding(.top, 20).padding(.bottom, 8)
     }
 }
 
@@ -2232,7 +2242,7 @@ struct RootView: View {
         HStack(spacing: 0) {
             Sidebar(model: model)
             VStack(spacing: 0) {
-                Header(model: model)
+                if model.section != .atlas { Header(model: model) }
                 switch model.section {
                 case .atlas: AtlasView(model: model)
                 case .radar: RadarView(model: model)

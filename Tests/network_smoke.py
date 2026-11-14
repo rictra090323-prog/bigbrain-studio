@@ -20,6 +20,24 @@ for url in ("http://127.0.0.1", "http://2130706433", "http://169.254.169.254",
     except ValueError:
         pass
 
+spec = importlib.util.spec_from_file_location("network", bridge.parent / "network.py")
+network = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(network)
+
+sample = {key: {"path": f"notes/{key}.md", "title": title, "kind": "note", "file": ""}
+          for key, title in (("a", "Alpha"), ("b", "Beta"), ("c", "Permafrost sampling"),
+                             ("d", "Permafrost measurements"), ("e", "Chopin"), ("f", "Index"))}
+links = {("a", "f")}
+graph = network.layout(sample, links, [], [], "", 6, now=0)
+suggested = [edge for edge in graph["edges"] if edge["kind"] == "suggested"]
+assert [(edge["a"], edge["b"]) for edge in suggested] == [("c", "d")]
+assert graph["linked"] == 1 and graph["learned"] == 0
+assert next(node for node in graph["nodes"] if node["id"] == "c")["degree"] == 0
+
+focused = network.layout(sample, {("a", "b"), ("d", "f")}, [], [], "d", 4, now=0)
+assert any(edge["kind"] == "explicit" and (edge["a"], edge["b"]) == ("d", "f")
+           for edge in focused["edges"])
+
 with tempfile.TemporaryDirectory(prefix="bigbrain-native-test-") as tmp:
     root = Path(tmp)
     vault = root / "legacy"

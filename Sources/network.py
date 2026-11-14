@@ -12,6 +12,7 @@ FENCES = re.compile(r"^[ \t]*(?:```|~~~).*?$.*?^[ \t]*(?:```|~~~)[ \t]*$", re.M 
 WIKI_LINK = re.compile(r"(?<!!)\[\[([^\]\n]+)\]\]")
 MD_LINK = re.compile(r'(?<!!)\[[^\]\n]+\]\(\s*(?:<([^>\n]+)>(?:\s+"BigBrain:[a-f0-9]{64}:[0-9]+:[0-9]+")?|([^()\n]+?))\s*\)')
 HALF_LIFE = 30 * 86400
+TITLE_STOPWORDS = set("anteckning anteckningar dokument exempel frågor guide information notes overview plan project projekt sammanfattning status study uppdatering version arbete about after before from into the this that these those with utan eller efter från genom med över till under mellan och som för den det".split())
 
 
 def address(text):
@@ -105,6 +106,34 @@ def sphere_direction(seed):
     return radius * math.cos(angle), radius * math.sin(angle), z
 
 
+def suggest_visible_edges(items, visible, neighbors):
+    """Offer one local bridge for isolated nodes when title or folder provides a signal."""
+    visible_set = set(visible)
+    covered = {key for key in visible if visible_set.intersection(neighbors[key])}
+    folders = {key: posixpath.dirname(items[key]["path"]).casefold() for key in visible}
+    titles = {key: {word for word in re.findall(r"[^\W\d_]+", items[key]["title"].casefold())
+                    if len(word) >= 4 and word not in TITLE_STOPWORDS} for key in visible}
+    result = []
+    for key in visible:
+        if key in covered:
+            continue
+        matches = []
+        for other in visible:
+            if other == key:
+                continue
+            common = titles[key] & titles[other]
+            same_subfolder = "/" in folders[key] and folders[key] == folders[other]
+            if common or same_subfolder:
+                score = 2 * min(3, len(common)) + int(same_subfolder)
+                matches.append((score, other in covered, other))
+        if matches:
+            _, _, other = max(matches)
+            a, b = sorted((key, other))
+            result.append({"a": a, "b": b, "kind": "suggested", "weight": 0.18, "count": 0})
+            covered.update((key, other))
+    return result
+
+
 def layout(items, edges, learned, seeds, focus, limit, now=None):
     now = time.time() if now is None else now
     neighbors = defaultdict(dict)
@@ -159,6 +188,23 @@ def layout(items, edges, learned, seeds, focus, limit, now=None):
         if len(visible) == previous:
             break
     visible_set = set(visible)
+    protected = set(reserve) | set(seeds)
+    for key in list(visible):
+        if key not in visible_set or not neighbors[key] or visible_set.intersection(neighbors[key]):
+            continue
+        other = min(neighbors[key], key=lambda candidate: (-neighbors[key][candidate], candidate))
+        if len(visible) < limit:
+            visible.append(other)
+        else:
+            replace = next((candidate for candidate in reversed(visible)
+                            if candidate != key and candidate not in protected
+                            and layer(candidate) == layer(other)
+                            and not visible_set.intersection(neighbors[candidate])), None)
+            if replace is None:
+                continue
+            visible[visible.index(replace)] = other
+            visible_set.remove(replace)
+        visible_set.add(other)
     nodes = []
     for key in visible:
         row = items[key]
@@ -177,4 +223,5 @@ def layout(items, edges, learned, seeds, focus, limit, now=None):
              for a, b in sorted(edges) if a in visible_set and b in visible_set]
     links += [{"a": a, "b": b, "kind": "learned", "weight": round(weight, 4), "count": count}
               for a, b, weight, count in live if a in visible_set and b in visible_set]
+    links += suggest_visible_edges(items, visible, neighbors)
     return {"nodes": nodes, "edges": links, "total": len(items), "linked": len(edges), "learned": len(live)}
