@@ -1,7 +1,8 @@
+import AppKit
 import SwiftUI
 import simd
 
-struct AtlasNode: Decodable, Identifiable, Sendable {
+struct AtlasNode: Decodable, Equatable, Identifiable, Sendable {
     let id: String
     let title: String
     let path: String
@@ -17,9 +18,9 @@ struct AtlasNode: Decodable, Identifiable, Sendable {
     var hit: Hit { Hit(id: id, path: path, file: file, title: title, kind: kind, excerpt: "", match: "text") }
     var tint: Color {
         switch layer {
-        case "source": Color(red: 0.32, green: 0.93, blue: 0.94)
-        case "skill": Color(red: 0.83, green: 0.65, blue: 1)
-        default: Color(red: 0.75, green: 0.84, blue: 1)
+        case "source": atlasIce
+        case "skill": atlasLilac
+        default: atlasGold
         }
     }
     var label: String {
@@ -31,7 +32,7 @@ struct AtlasNode: Decodable, Identifiable, Sendable {
     }
 }
 
-struct AtlasEdge: Decodable, Identifiable, Sendable {
+struct AtlasEdge: Decodable, Equatable, Identifiable, Sendable {
     let a: String, b: String, kind: String
     let weight: Double
     let count: Int
@@ -47,10 +48,10 @@ struct AtlasSnapshot: Decodable, Sendable {
     let learned: Int
 }
 
-private let atlasInk = Color(red: 0.024, green: 0.038, blue: 0.094)
-private let atlasBlue = Color(red: 0.23, green: 0.45, blue: 0.88)
-private let atlasIce = Color(red: 0.53, green: 0.95, blue: 1)
-private let atlasLilac = Color(red: 0.81, green: 0.64, blue: 1)
+private let atlasInk = Color(red: 0.018, green: 0.022, blue: 0.035)
+private let atlasIce = Color(red: 0.38, green: 0.91, blue: 0.86)
+private let atlasLilac = Color(red: 0.78, green: 0.66, blue: 1)
+private let atlasGold = Color(red: 1, green: 0.76, blue: 0.42)
 
 extension View {
     @ViewBuilder
@@ -87,15 +88,16 @@ private enum AtlasShape: String, CaseIterable {
 }
 
 private struct OrbitCamera {
-    typealias ProjectedPoint = (point: CGPoint, depth: Double, scale: Double)
-    static let distance = 3.65
+    static let homeDistance = 3.65
+    static let near = 0.12
+    static let zoomRange = 0.6...17.0
+
     var yaw: Double = -0.81
     var tilt: Double = 0.35
     var zoom: Double = 1
+    var focus = SIMD3<Double>.zero
 
-    func units(in size: CGSize) -> Double {
-        min(size.width * 0.40, size.height * 0.41) * zoom
-    }
+    var distance: Double { Self.homeDistance / zoom }
 
     var rotation: simd_double3x3 {
         let (c, s) = (cos(yaw), sin(yaw))
@@ -107,438 +109,576 @@ private struct OrbitCamera {
         ))
     }
 
-    func projection(in size: CGSize) -> (SIMD3<Double>) -> ProjectedPoint {
-        let rotation = rotation
-        let unit = units(in: size)
-        return { world in
-            let rotated = rotation * world
-            let scale = Self.distance / (Self.distance - rotated.z)
-            return (CGPoint(x: size.width / 2 + rotated.x * unit * scale,
-                            y: size.height / 2 - rotated.y * unit * scale), rotated.z, scale)
+    func moving(toward end: Self, fraction: Double) -> Self {
+        Self(yaw: yaw + (end.yaw - yaw) * fraction,
+             tilt: tilt + (end.tilt - tilt) * fraction,
+             zoom: zoom * pow(end.zoom / zoom, fraction),
+             focus: focus + (end.focus - focus) * fraction)
+    }
+
+    struct Projection {
+        let size: CGSize
+        let rotation: simd_double3x3
+        let distance: Double
+        let focus: SIMD3<Double>
+        let focalLength: Double
+
+        init(camera: OrbitCamera, size: CGSize) {
+            self.size = size
+            rotation = camera.rotation
+            distance = camera.distance
+            focus = camera.focus
+            focalLength = min(size.width * 0.46, size.height * 0.47) * OrbitCamera.homeDistance
+        }
+
+        func viewSpace(_ world: SIMD3<Double>) -> SIMD3<Double> {
+            let rotated = rotation * (world - focus)
+            return SIMD3(rotated.x, rotated.y, distance - rotated.z)
+        }
+
+        func point(_ view: SIMD3<Double>) -> CGPoint? {
+            guard view.z >= OrbitCamera.near else { return nil }
+            let scale = focalLength / view.z
+            return CGPoint(x: size.width / 2 + view.x * scale, y: size.height / 2 - view.y * scale)
+        }
+
+        func segment(_ a: SIMD3<Double>, _ b: SIMD3<Double>) -> (CGPoint, CGPoint)? {
+            let near = OrbitCamera.near
+            guard a.z >= near || b.z >= near else { return nil }
+            var start = a
+            var end = b
+            if a.z < near || b.z < near {
+                let intersection = a + (b - a) * ((near - a.z) / (b.z - a.z))
+                let clipped = SIMD3(intersection.x, intersection.y, near)
+                if a.z < near { start = clipped } else { end = clipped }
+            }
+            guard let start = point(start), let end = point(end) else { return nil }
+            return (start, end)
         }
     }
 }
 
-private struct AtlasBrainSurface: Sendable {
-    struct Face: Sendable {
-        let a, b, c: Int
-        let normal: SIMD3<Double>
-    }
-
-    struct Ridge: Sendable {
-        let a, b: Int
-        let normal: SIMD3<Double>
-        let contrast: Double
-    }
-
+private struct AtlasBrainSurface {
     let vertices: [SIMD3<Double>]
-    let faces: [Face]
-    let neighbors: [[Int]]
-    let ridges: [Ridge]
+    let directions: [SIMD3<Double>]
 
     static let bundled: Self? = {
         guard let url = Bundle.main.url(forResource: "AtlasBrain", withExtension: "mesh"),
               let data = try? Data(contentsOf: url), data.count >= 12,
               data.prefix(4) == Data("BBM1".utf8) else { return nil }
         return data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
-            let vertexCount = Int(UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: 4, as: UInt32.self)))
-            let indexCount = Int(UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: 8, as: UInt32.self)))
-            guard (1..<65536).contains(vertexCount), indexCount > 0, indexCount % 3 == 0 else { return nil }
-            let indexOffset = 12 + vertexCount * 12
-            guard indexOffset + indexCount * 2 == bytes.count else { return nil }
-
-            func vector(at offset: Int) -> SIMD3<Double> {
-                func value(_ i: Int) -> Double {
-                    Double(Int16(littleEndian: bytes.loadUnaligned(fromByteOffset: offset + i, as: Int16.self))) / 32767
+            let count = Int(UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: 4, as: UInt32.self)))
+            guard (1..<65536).contains(count), 12 + count * 12 <= bytes.count else { return nil }
+            let vertices = (0..<count).map { index in
+                let offset = 12 + index * 12
+                func value(_ component: Int) -> Double {
+                    Double(Int16(littleEndian: bytes.loadUnaligned(fromByteOffset: offset + component * 2, as: Int16.self))) / 32767
                 }
-                return SIMD3(value(0), value(2), value(4))
-            }
-
-            let vertices = (0..<vertexCount).map { vector(at: 12 + $0 * 12) }
-            let normals = (0..<vertexCount).map { vector(at: 18 + $0 * 12) }
-            var neighbors = Array(repeating: Set<Int>(), count: vertexCount)
-            var faces: [Face] = []
-            faces.reserveCapacity(indexCount / 3)
-            func index(at offset: Int) -> Int {
-                Int(UInt16(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt16.self)))
-            }
-            for offset in stride(from: indexOffset, to: bytes.count, by: 6) {
-                let (a, b, c) = (index(at: offset), index(at: offset + 2), index(at: offset + 4))
-                guard a < vertexCount, b < vertexCount, c < vertexCount else { return nil }
-                let normal = normals[a] + normals[b] + normals[c]
-                guard simd_length_squared(normal) > 0.00001 else { continue }
-                faces.append(Face(a: a, b: b, c: c, normal: simd_normalize(normal)))
-                neighbors[a].formUnion([b, c])
-                neighbors[b].formUnion([a, c])
-                neighbors[c].formUnion([a, b])
-            }
-            let adjacency = neighbors.map { $0.sorted() }
-            var ridges: [Ridge] = []
-            for a in vertices.indices {
-                for b in adjacency[a] where b > a {
-                    let contrast = 1 - simd_dot(normals[a], normals[b])
-                    let normal = normals[a] + normals[b]
-                    guard contrast > 0.058, simd_length_squared(normal) > 0.00001 else { continue }
-                    ridges.append(Ridge(a: a, b: b, normal: simd_normalize(normal), contrast: min(1, contrast * 6)))
-                }
-            }
-            return Self(vertices: vertices, faces: faces, neighbors: adjacency, ridges: ridges)
+                return SIMD3(value(0), value(1), value(2)) - SIMD3(0, 0.12, 0)
+            }.filter { simd_length_squared($0) > 0.02 }
+            guard !vertices.isEmpty else { return nil }
+            return Self(vertices: vertices, directions: vertices.map { simd_normalize($0) })
         }
     }()
 
-    func anchor(for node: AtlasNode) -> Int {
-        let side = node.x < 0 ? -1.0 : 1.0
-        let direction = simd_normalize(SIMD3(0.24 + abs(node.x), node.y * 1.18, node.z * 1.18))
-        let target = SIMD3(side * (0.33 + direction.x * 0.46), 0.12 + direction.y * 0.62, direction.z * 0.86)
-        return vertices.indices.min { simd_distance_squared(vertices[$0], target) < simd_distance_squared(vertices[$1], target) } ?? 0
-    }
-
-    func routes(from start: Int, to targets: Set<Int>) -> [Int: [Int]] {
-        var parents = Array(repeating: -1, count: vertices.count)
-        parents[start] = start
-        var queue = [start]
-        var next = 0
-        var pending = targets
-        pending.remove(start)
-        while next < queue.count && !pending.isEmpty {
-            let vertex = queue[next]
-            next += 1
-            for neighbor in neighbors[vertex] where parents[neighbor] == -1 {
-                parents[neighbor] = vertex
-                queue.append(neighbor)
-                pending.remove(neighbor)
-            }
-        }
-
-        var paths: [Int: [Int]] = [:]
-        for target in targets where parents[target] != -1 {
-            var path = [target]
-            while let last = path.last, last != start { path.append(parents[last]) }
-            paths[target] = Array(path.reversed())
-        }
-        return paths
+    func position(for point: SIMD3<Double>) -> SIMD3<Double> {
+        let radius = simd_length(point)
+        guard radius > 0.0001 else { return .zero }
+        let direction = point / radius
+        let index = directions.indices.max {
+            simd_dot(directions[$0], direction) < simd_dot(directions[$1], direction)
+        } ?? 0
+        return vertices[index] * min(1, radius * 1.12)
     }
 }
 
-private struct AtlasBrainNetwork: Sendable {
-    struct LitFace: Sendable {
-        let face: AtlasBrainSurface.Face
-        let strength: Double
-        let begins: Double
+private struct AtlasCloud {
+    struct Mote {
+        let offset: SIMD3<Double>
+        let radius: Double
+        let brightness: Double
     }
 
-    struct LitRidge: Sendable {
-        let ridge: AtlasBrainSurface.Ridge
-        let strength: Double
-        let begins: Double
+    struct Entry {
+        let node: AtlasNode
+        let sphere: SIMD3<Double>
+        let brain: SIMD3<Double>
+        let motes: [Mote]
+
+        func position(blend: Double) -> SIMD3<Double> {
+            sphere + (brain - sphere) * blend
+        }
     }
 
-    let anchors: [String: Int]
-    let routes: [String: [Int]]
-    let faces: [LitFace]
-    let ridges: [LitRidge]
+    let entries: [Entry]
 
-    init(atlas: AtlasSnapshot, surface: AtlasBrainSurface, starts: [String: Double]) {
-        let anchors = Dictionary(uniqueKeysWithValues: atlas.nodes.map { ($0.id, surface.anchor(for: $0)) })
-        self.anchors = anchors
-        var routes: [String: [Int]] = [:]
-        for (source, edges) in Dictionary(grouping: atlas.edges, by: \.a) {
-            guard let start = anchors[source] else { continue }
-            let paths = surface.routes(from: start, to: Set(edges.compactMap { anchors[$0.b] }))
-            for edge in edges {
-                guard let end = anchors[edge.b] else { continue }
-                // Separate meshes, such as the two hemispheres, meet through a direct connection.
-                routes[edge.id] = paths[end] ?? [start, end]
+    init(nodes: [AtlasNode]) {
+        let moteCount = min(96, max(18, 3200 / max(1, nodes.count)))
+        entries = nodes.map { node in
+            let point = SIMD3(node.x, node.y, node.z)
+            let brain = AtlasBrainSurface.bundled?.position(for: point) ?? point
+            // The surrounding points are decoration. Each bright anchor represents a real document.
+            var seed = node.id.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+            func sample() -> Double {
+                seed = seed &* 6364136223846793005 &+ 1442695040888963407
+                return Double(seed >> 40) / 16777216
             }
-        }
-        self.routes = routes
-
-        var onset = Array(repeating: Double.infinity, count: surface.vertices.count)
-        var strength = Array(repeating: 0.0, count: surface.vertices.count)
-        var wave: [Int] = []
-        for edge in atlas.edges {
-            guard let route = routes[edge.id] else { continue }
-            let start = starts[edge.id] ?? -1
-            for (index, vertex) in route.enumerated() {
-                if strength[vertex] == 0 { wave.append(vertex) }
-                strength[vertex] = 1
-                onset[vertex] = min(onset[vertex], start + 0.27 * Double(index) / Double(max(1, route.count - 1)))
+            let motes = (0..<moteCount).map { _ in
+                let height = sample() * 2 - 1
+                let angle = sample() * 2 * .pi
+                let ring = sqrt(1 - height * height)
+                let distance = 0.30 * pow(sample(), 0.68)
+                return Mote(offset: SIMD3(ring * cos(angle), height, ring * sin(angle)) * distance,
+                            radius: 0.40 + 0.61 * sample(), brightness: (0.32 + 0.68 * sample()) * (1 - distance * 1.1))
             }
-        }
-        // Light only the folds bordering a route. The rest of the surface stays invisible.
-        for step in 1...5 {
-            var next: [Int] = []
-            for vertex in wave {
-                for neighbor in surface.neighbors[vertex] {
-                    if strength[neighbor] == 0 {
-                        strength[neighbor] = 1 - Double(step) * 0.145
-                        onset[neighbor] = onset[vertex] + 0.022
-                        next.append(neighbor)
-                    } else if abs(strength[neighbor] - (strength[vertex] - 0.145)) < 0.001 {
-                        onset[neighbor] = min(onset[neighbor], onset[vertex] + 0.022)
-                    }
-                }
-            }
-            wave = next
-        }
-        faces = surface.faces.compactMap { face in
-            let intensity = (strength[face.a] + strength[face.b] + strength[face.c]) / 3
-            guard intensity > 0.12 else { return nil }
-            return LitFace(face: face, strength: intensity, begins: min(onset[face.a], onset[face.b], onset[face.c]))
-        }
-        ridges = surface.ridges.compactMap { ridge in
-            let intensity = min(strength[ridge.a], strength[ridge.b])
-            guard intensity > 0 else { return nil }
-            return LitRidge(ridge: ridge, strength: intensity, begins: max(onset[ridge.a], onset[ridge.b]))
+            return Entry(node: node, sphere: point, brain: brain, motes: motes)
         }
     }
 }
 
-private func edgeStart(_ rank: Int, count: Int) -> Double {
-    0.58 * Double(rank) / Double(max(1, count - 1))
+private func atlasProgress(_ elapsed: TimeInterval, duration: Double) -> Double {
+    min(1, max(0, elapsed / duration))
+}
+
+private struct OrbitMotion {
+    let start: OrbitCamera
+    let target: OrbitCamera
+    let started: Date
+    let duration: Double
+
+    func camera(at date: Date) -> OrbitCamera {
+        let t = atlasProgress(date.timeIntervalSince(started), duration: duration)
+        return start.moving(toward: target, fraction: 1 - pow(1 - t, 3))
+    }
 }
 
 private struct AtlasOrbit: View {
     let atlas: AtlasSnapshot?
     let selected: String?
     let shape: AtlasShape
+    let onlyConnections: Bool
+    let focusRequest: Int
+    let acceptsScroll: Bool
     let choose: (AtlasNode) -> Void
 
-    private struct LayoutKey: Equatable {
-        let shape: AtlasShape
-        let nodes: [String]
-        let edges: [String]
-    }
-
-    @LocalState private var camera = OrbitCamera()
-    @LocalState private var dragOrigin: OrbitCamera?
-    @LocalState private var brain: AtlasBrainNetwork?
-    @LocalState private var displayedShape: AtlasShape?
-    @LocalState private var displayedEdges: Set<String> = []
-    @LocalState private var edgeStarts: [String: Double] = [:]
-    @LocalState private var growthStart = Date.distantPast
-    @LocalState private var growing = false
-    @GestureState private var pinch: CGFloat = 1
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let zoomLimits = 0.55...3.25
+    @AppStorage("atlasHaptics") private var haptics = true
+    @LocalState private var camera = OrbitCamera()
+    @LocalState private var motion: OrbitMotion?
+    @LocalState private var dragOrigin: OrbitCamera?
+    @LocalState private var lastTick = Date.distantPast
+    @LocalState private var tickTravel = 0.0
+    @LocalState private var cloud = AtlasCloud(nodes: [])
+    @LocalState private var edges: [AtlasEdge] = []
+    @LocalState private var nodeArrivals: [String: Date] = [:]
+    @LocalState private var edgeArrivals: [String: Date] = [:]
+    @LocalState private var selectionStart = Date.distantPast
+    @LocalState private var morphStart = Date.distantPast
+    @LocalState private var morphOrigin = 0.0
+    @LocalState private var morphTarget = 0.0
+    @LocalState private var animationUntil = Date.distantPast
+    @LocalState private var animating = false
+    @LocalState private var hovered: String?
+    @LocalState private var lastPinch = 1.0
 
-    private var layoutKey: LayoutKey {
-        LayoutKey(shape: shape, nodes: atlas?.nodes.map(\.id).sorted() ?? [], edges: atlas?.edges.map(\.id) ?? [])
-    }
+    private var nodes: [AtlasNode] { atlas?.nodes ?? [] }
+    private var visibleEdges: [AtlasEdge] { atlas?.edges ?? [] }
 
-    private var displayCamera: OrbitCamera {
-        var display = camera
-        display.zoom = boundedZoom(camera.zoom * pinch)
-        return display
-    }
-
-    private func boundedZoom(_ value: Double) -> Double {
-        min(zoomLimits.upperBound, max(zoomLimits.lowerBound, value))
-    }
-
-    private func worldPosition(_ node: AtlasNode) -> SIMD3<Double> {
-        if shape == .brain, let anchor = brain?.anchors[node.id], let surface = AtlasBrainSurface.bundled {
-            return surface.vertices[anchor]
+    private var connectedIDs: Set<String> {
+        guard let selected else { return [] }
+        var ids: Set<String> = [selected]
+        for edge in edges {
+            if edge.a == selected { ids.insert(edge.b) }
+            if edge.b == selected { ids.insert(edge.a) }
         }
-        return SIMD3(node.x, node.y, node.z)
+        return ids
     }
 
     var body: some View {
         GeometryReader { geometry in
-            let size = geometry.size
             Rectangle().fill(.clear)
                 .overlay {
-                    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !growing || reduceMotion)) { timeline in
-                        let progress = growing && !reduceMotion
-                            ? min(1, max(0, timeline.date.timeIntervalSince(growthStart) / 1.25)) : 1
-                        Canvas { context, bounds in drawGraph(context, bounds: bounds, progress: progress) }
+                    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion || !animating)) { timeline in
+                        let date = animating && !reduceMotion ? timeline.date : Date.now
+                        Canvas { context, size in drawGraph(context, size: size, at: date) }
                     }
                     .allowsHitTesting(false)
                 }
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 4).onChanged { value in
-                let origin = dragOrigin ?? camera
-                dragOrigin = origin
-                camera.yaw = origin.yaw + Double(value.translation.width) * 0.009
-                camera.tilt = min(1.5, max(-1.5, origin.tilt + Double(value.translation.height) * 0.009))
-            }.onEnded { _ in dragOrigin = nil })
-            .simultaneousGesture(MagnifyGesture()
-                .updating($pinch) { value, scale, _ in scale = value.magnification }
-                .onEnded { value in camera.zoom = boundedZoom(camera.zoom * value.magnification) })
-            .simultaneousGesture(SpatialTapGesture().onEnded { value in
-                guard shape == .sphere || brain != nil else { return }
-                let project = displayCamera.projection(in: size)
-                let candidates = (atlas?.nodes ?? []).map { node in
-                    let p = project(worldPosition(node))
-                    return (node: node, distance: hypot(p.point.x - value.location.x, p.point.y - value.location.y), depth: p.depth)
+                .background {
+                    AtlasScrollInput(enabled: acceptsScroll) { delta in
+                        zoom(by: exp(delta * 0.012), animated: false)
+                    }
                 }
-                let nearest = candidates.min {
-                    $0.distance == $1.distance ? $0.depth > $1.depth : $0.distance < $1.distance
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 4).onChanged(rotate).onEnded(finishRotation))
+                .simultaneousGesture(MagnifyGesture()
+                    .onChanged { value in
+                        let scale = Double(value.magnification)
+                        zoom(by: scale / lastPinch, animated: false)
+                        lastPinch = scale
+                    }
+                    .onEnded { _ in lastPinch = 1 })
+                .simultaneousGesture(SpatialTapGesture().onEnded { value in
+                    if let entry = hit(at: value.location, size: geometry.size) { choose(entry.node) }
+                })
+                .onContinuousHover { phase in
+                    if case .active(let point) = phase, dragOrigin == nil, motion == nil {
+                        hovered = hit(at: point, size: geometry.size)?.node.id
+                    } else {
+                        hovered = nil
+                    }
                 }
-                if let nearest, nearest.distance < 19 { choose(nearest.node) }
-            })
-            .accessibilityHidden(true)
+                .accessibilityHidden(true)
         }
-        .task(id: layoutKey) {
-            let visible = atlas?.edges.map(\.id) ?? []
-            let newEdges = displayedShape == shape ? visible.filter { !displayedEdges.contains($0) } : visible
-            let starts = Dictionary(uniqueKeysWithValues: newEdges.enumerated().map {
-                ($0.element, edgeStart($0.offset, count: newEdges.count))
-            })
-            if shape == .brain, let atlas, let surface = AtlasBrainSurface.bundled {
-                let work = Task.detached(priority: .userInitiated) {
-                    AtlasBrainNetwork(atlas: atlas, surface: surface, starts: starts)
-                }
-                let network = await work.value
-                guard !Task.isCancelled else { return }
-                brain = network
-            } else {
-                brain = nil
+        .onChange(of: nodes, initial: true) { _, new in
+            let now = Date.now
+            let known = Set(cloud.entries.map { $0.node.id })
+            let arriving = new.filter { !known.contains($0.id) }
+            nodeArrivals = nodeArrivals.filter { now.timeIntervalSince($0.value) < 0.65 }
+            for (index, entry) in arriving.enumerated() {
+                nodeArrivals[entry.id] = now.addingTimeInterval(0.33 * Double(index) / Double(max(1, arriving.count - 1)))
             }
-            displayedShape = shape
-            displayedEdges = Set(visible)
-            edgeStarts = starts
-            guard !reduceMotion, !starts.isEmpty else {
-                growing = false
-                return
+            cloud = AtlasCloud(nodes: new)
+            if !arriving.isEmpty { animate(for: 1.0) }
+        }
+        .onChange(of: visibleEdges, initial: true) { _, new in
+            let now = Date.now
+            let known = Set(edges.map(\.id))
+            let arriving = new.filter { !known.contains($0.id) }
+            edgeArrivals = edgeArrivals.filter { now.timeIntervalSince($0.value) < 0.54 }
+            for (index, edge) in arriving.enumerated() {
+                edgeArrivals[edge.id] = now.addingTimeInterval(0.17 + 0.40 * Double(index) / Double(max(1, arriving.count - 1)))
             }
-            growthStart = .now
-            growing = true
-            do {
-                try await Task.sleep(for: .milliseconds(1250))
-                growing = false
-            } catch {}
+            edges = new
+            if !arriving.isEmpty { animate(for: 1.18) }
+        }
+        .onChange(of: shape, initial: true) { old, new in
+            let now = Date.now
+            let target = new == .brain ? 1.0 : 0.0
+            morphOrigin = old == new ? target : blend(at: now)
+            morphTarget = target
+            morphStart = now
+            if old != new {
+                var targetCamera = currentCamera()
+                targetCamera.focus = .zero
+                move(to: targetCamera, duration: 0.68)
+            }
+        }
+        .onChange(of: selected) { _, _ in
+            selectionStart = .now
+            hovered = nil
+            animate(for: 0.70)
+        }
+        .onChange(of: focusRequest) { _, _ in
+            guard let entry = cloud.entries.first(where: { $0.node.id == selected }) else { return }
+            var target = currentCamera()
+            target.focus = entry.position(blend: morphTarget)
+            target.zoom = 4.4
+            move(to: target, duration: 0.66)
+        }
+        .onChange(of: reduceMotion) { _, reduced in
+            if reduced {
+                motion = nil
+                morphOrigin = morphTarget
+                animationUntil = .distantPast
+                animating = false
+            }
+        }
+        .task(id: animationUntil) {
+            let remaining = animationUntil.timeIntervalSinceNow
+            if remaining > 0 {
+                do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+            }
+            guard !Task.isCancelled else { return }
+            motion = nil
+            animating = false
         }
         .overlay(alignment: .bottomTrailing) {
-            HStack(spacing: 4) {
-                orbitButton("minus", "Zooma ut", enabled: camera.zoom > zoomLimits.lowerBound) {
-                    camera.zoom = boundedZoom(camera.zoom / 1.2)
+            HStack(spacing: 2) {
+                orbitButton("minus", "Zooma ut", enabled: camera.zoom > OrbitCamera.zoomRange.lowerBound) {
+                    zoom(by: 1 / 1.55, animated: true)
                 }
-                orbitButton("plus", "Zooma in", enabled: camera.zoom < zoomLimits.upperBound) {
-                    camera.zoom = boundedZoom(camera.zoom * 1.2)
+                orbitButton("plus", "Zooma in", enabled: camera.zoom < OrbitCamera.zoomRange.upperBound) {
+                    zoom(by: 1.55, animated: true)
                 }
-                orbitButton("arrow.counterclockwise", "Återställ perspektivet") { camera = OrbitCamera() }
+                Divider().frame(height: 14).padding(.horizontal, 3)
+                orbitButton("arrow.counterclockwise", "Återställ perspektivet") {
+                    var home = OrbitCamera()
+                    let yaw = currentCamera().yaw
+                    home.yaw += ((yaw - home.yaw) / (2 * .pi)).rounded() * 2 * .pi
+                    move(to: home, duration: 0.58)
+                }
             }
-            .padding(5)
+            .padding(4)
             .brainGlass(Capsule())
-            .padding(15)
+            .padding(16)
         }
     }
 
-    private func drawGraph(_ context: GraphicsContext, bounds: CGSize, progress: Double) {
-        guard let atlas, shape == .sphere || brain != nil else { return }
-        let camera = displayCamera
-        let project = camera.projection(in: bounds)
-        let world = Dictionary(uniqueKeysWithValues: atlas.nodes.map { ($0.id, worldPosition($0)) })
-        let points = world.mapValues(project)
-        let surface = shape == .brain ? AtlasBrainSurface.bundled : nil
-        let surfacePoints = surface?.vertices.map(project) ?? []
-        if let brain, shape == .brain {
-            drawFolds(brain, surfacePoints: surfacePoints, rotation: camera.rotation, progress: progress, context: context)
+    private func animate(for duration: Double) {
+        guard !reduceMotion else { return }
+        animationUntil = max(animationUntil, Date.now.addingTimeInterval(duration))
+        animating = true
+    }
+
+    private func blend(at date: Date) -> Double {
+        if reduceMotion { return morphTarget }
+        let t = atlasProgress(date.timeIntervalSince(morphStart), duration: 0.68)
+        return morphOrigin + (morphTarget - morphOrigin) * (t * t * (3 - 2 * t))
+    }
+
+    private func currentCamera(at date: Date = .now) -> OrbitCamera {
+        reduceMotion ? camera : motion?.camera(at: date) ?? camera
+    }
+
+    private func move(to target: OrbitCamera, duration: Double) {
+        motion = reduceMotion ? nil : OrbitMotion(start: currentCamera(), target: target, started: .now, duration: duration)
+        camera = target
+        hovered = nil
+        animate(for: duration + 0.05)
+    }
+
+    private func zoom(by factor: Double, animated: Bool) {
+        var target = animated ? camera : currentCamera()
+        let prior = target.zoom
+        let range = OrbitCamera.zoomRange
+        target.zoom = min(range.upperBound, max(range.lowerBound, prior * factor))
+        guard target.zoom != prior else { return }
+        if animated {
+            move(to: target, duration: 0.32)
+        } else {
+            let boundary = OrbitCamera.homeDistance / 0.80
+            if (prior < boundary) != (target.zoom < boundary) { tick(at: .now) }
+            camera = target
+            motion = nil
+            hovered = nil
+            // A simultaneous drag should keep the new zoom on its next update.
+            dragOrigin?.zoom = target.zoom
+        }
+    }
+
+    private func tick(at date: Date) {
+        guard haptics, date.timeIntervalSince(lastTick) >= 0.14 else { return }
+        BrainHaptics.selection()
+        lastTick = date
+    }
+
+    private func rotate(_ value: DragGesture.Value) {
+        if dragOrigin == nil {
+            dragOrigin = currentCamera()
+            motion = nil
+            tickTravel = 0
+            hovered = nil
+        }
+        guard let origin = dragOrigin else { return }
+        var target = origin
+        target.yaw += Double(value.translation.width) * 0.0075
+        target.tilt = min(1.52, max(-1.52, origin.tilt + Double(value.translation.height) * 0.0075))
+        camera = target
+        let travel = hypot(target.yaw - origin.yaw, target.tilt - origin.tilt)
+        if abs(travel - tickTravel) >= 0.33 {
+            tick(at: value.time)
+            tickTravel = travel
+        }
+    }
+
+    private func finishRotation(_ value: DragGesture.Value) {
+        dragOrigin = nil
+        guard !reduceMotion else { return }
+        let dx = value.predictedEndTranslation.width - value.translation.width
+        let dy = value.predictedEndTranslation.height - value.translation.height
+        var target = camera
+        target.yaw += min(0.82, max(-0.82, Double(dx) * 0.0041))
+        target.tilt = min(1.52, max(-1.52, target.tilt + Double(dy) * 0.003))
+        if abs(target.yaw - camera.yaw) + abs(target.tilt - camera.tilt) > 0.03 {
+            move(to: target, duration: 0.62)
+        }
+    }
+
+    private func hit(at point: CGPoint, size: CGSize) -> AtlasCloud.Entry? {
+        let now = Date.now
+        let projection = OrbitCamera.Projection(camera: currentCamera(at: now), size: size)
+        let blend = blend(at: now)
+        let ids = connectedIDs
+        return cloud.entries.compactMap { entry -> (AtlasCloud.Entry, Double, Double)? in
+            guard !onlyConnections || ids.contains(entry.node.id) else { return nil }
+            let world = projection.viewSpace(entry.position(blend: blend))
+            let visibility = reveal(nodeArrivals[entry.node.id], at: now, duration: 0.55) * depthFade(world.z)
+            guard visibility > 0.15, let p = projection.point(world) else { return nil }
+            let distance = hypot(p.x - point.x, p.y - point.y)
+            return distance < 16 ? (entry, distance, world.z) : nil
+        }.min { $0.1 == $1.1 ? $0.2 < $1.2 : $0.1 < $1.1 }?.0
+    }
+
+    private func reveal(_ start: Date?, at date: Date, duration: Double) -> Double {
+        guard !reduceMotion, let start else { return 1 }
+        return atlasProgress(date.timeIntervalSince(start), duration: duration)
+    }
+
+    private func depthFade(_ distance: Double) -> Double {
+        atlasProgress(distance - OrbitCamera.near, duration: 0.48)
+    }
+
+    private func drawGraph(_ context: GraphicsContext, size: CGSize, at date: Date) {
+        let projection = OrbitCamera.Projection(camera: currentCamera(at: date), size: size)
+        let blend = blend(at: date)
+        let neighbors = connectedIDs
+        let entries = onlyConnections ? cloud.entries.filter { neighbors.contains($0.node.id) } : cloud.entries
+        let world = entries.map { $0.position(blend: blend) }
+        let view = world.map(projection.viewSpace)
+        let indexes = Dictionary(uniqueKeysWithValues: entries.enumerated().map { ($0.element.node.id, $0.offset) })
+        let bounds = CGRect(origin: .zero, size: size).insetBy(dx: -8, dy: -8)
+        var dust: [String: [Path]] = [:]
+        var colors: [String: Color] = [:]
+        for (index, entry) in entries.enumerated() {
+            let visibility = reveal(nodeArrivals[entry.node.id], at: date, duration: 0.55)
+            guard visibility > 0 else { continue }
+            let group = entry.node.layer + (selected == nil || neighbors.contains(entry.node.id) ? "/full" : "/dim")
+            colors[group] = entry.node.tint
+            var bands = dust.removeValue(forKey: group) ?? Array(repeating: Path(), count: 6)
+            for mote in entry.motes {
+                let offset = mote.offset * (0.80 + 0.20 * visibility)
+                let v = projection.viewSpace(world[index] + offset)
+                guard let p = projection.point(v), bounds.contains(p) else { continue }
+                let intensity = mote.brightness * depthFade(v.z) * visibility
+                let band = min(5, Int(intensity * 7))
+                guard band > 0 else { continue }
+                let radius = min(1.7, mote.radius * pow(OrbitCamera.homeDistance / v.z, 0.36))
+                bands[band].addEllipse(in: CGRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2))
+            }
+            dust[group] = bands
+        }
+        for (group, bands) in dust {
+            guard let color = colors[group] else { continue }
+            let emphasis = group.hasSuffix("/dim") ? 0.52 : 1.0
+            for (band, path) in bands.enumerated() where !path.isEmpty {
+                context.fill(path, with: .color(color.opacity(Double(band) * 0.13 * emphasis)))
+            }
         }
 
-        let density = min(1, 185.0 / Double(max(1, atlas.edges.count)))
-        for edge in atlas.edges {
-            guard let one = points[edge.a], let two = points[edge.b] else { continue }
+        let density = min(1, 200.0 / Double(max(1, edges.count)))
+        for edge in edges {
+            guard let a = indexes[edge.a], let b = indexes[edge.b] else { continue }
             let active = selected == edge.a || selected == edge.b
-            let growth = edgeStarts[edge.id].map { min(1, max(0, (progress - $0) / 0.42)) } ?? 1
-            guard growth > 0 else { continue }
-            let depth = min(1, max(0, (one.depth + two.depth + 2) / 4))
-            var trace = Path()
-            trace.move(to: one.point)
-            if shape == .brain, let route = brain?.routes[edge.id], route.count > 2 {
-                trace.addLines(route.map { surfacePoints[$0].point })
-            } else if shape == .sphere, let start = world[edge.a], let end = world[edge.b] {
-                let middle = (start + end) / 2
-                let radialBend = min(0.16, simd_distance(start, end) * 0.16)
-                let control = project(middle * (1 + radialBend)).point
-                trace.addQuadCurve(to: two.point, control: control)
-            } else {
-                trace.addLine(to: two.point)
-            }
+            let amount = reveal(edgeArrivals[edge.id], at: date, duration: 0.53)
+            guard amount > 0 else { continue }
+            let start = view[a]
+            let end = start + (view[b] - start) * amount
+            guard let (from, to) = projection.segment(start, end) else { continue }
             let learned = edge.kind == "learned"
-            let color = learned ? atlasLilac : atlasIce
-            let opacity = (0.13 + depth * 0.22 + edge.weight * 0.08) * density
-                * (shape == .brain && (brain?.routes[edge.id]?.count ?? 0) < 3 ? 0.52 : 1)
-            context.stroke(growth == 1 ? trace : trace.trimmedPath(from: 0, to: growth),
-                           with: .color(color.opacity(active ? 0.93 : opacity)),
-                           style: StrokeStyle(lineWidth: active ? 1.65 : 0.7, lineCap: .round, lineJoin: .round,
-                                              dash: learned ? [4, 4] : []))
+            let tint = learned ? atlasLilac : entries[a].node.tint
+            let opacity = (active ? 0.78 : (selected == nil ? 0.27 : 0.10) * density) * depthFade(max(start.z, end.z))
+            var path = Path()
+            path.move(to: from)
+            path.addLine(to: to)
+            context.stroke(path, with: .color(tint.opacity(opacity)),
+                           style: StrokeStyle(lineWidth: active ? 1.35 : 0.65, lineCap: .round,
+                                              dash: learned ? [3, 4] : []))
         }
-        let ordered = atlas.nodes.sorted { (points[$0.id]?.depth ?? 0) < (points[$1.id]?.depth ?? 0) }
-        for node in ordered {
-            guard let p = points[node.id] else { continue }
-            let chosen = selected == node.id
-            let depth = min(1, max(0, (p.depth + 1) / 2))
-            let radius = (chosen ? 6.5 : 2.1 + node.signal * 2.3 + min(Double(node.degree), 12) * 0.08) * p.scale
-            let rect = CGRect(x: p.point.x - radius, y: p.point.y - radius, width: 2 * radius, height: 2 * radius)
-            if chosen || node.signal > 0.35 {
-                context.fill(Path(ellipseIn: rect.insetBy(dx: -5, dy: -5)), with: .color(node.tint.opacity(0.20)))
-            }
-            context.fill(Path(ellipseIn: rect), with: .color(node.tint.opacity(chosen ? 1 : 0.43 + depth * 0.54)))
-            if chosen {
-                context.stroke(Path(ellipseIn: rect.insetBy(dx: -4, dy: -4)), with: .color(node.tint), lineWidth: 0.9)
-            }
-        }
-    }
 
-    private func drawFolds(_ brain: AtlasBrainNetwork, surfacePoints: [OrbitCamera.ProjectedPoint],
-                           rotation: simd_double3x3, progress: Double, context: GraphicsContext) {
-        let light = simd_normalize(SIMD3(-0.38, 0.53, 0.68))
-        // Batch facets by light level so the cortex stays responsive while rotating.
-        let bands = 14
-        var paths = Array(repeating: Path(), count: bands * 2)
-        for part in brain.faces {
-            let normal = rotation * part.face.normal
-            let growth = min(1, max(0, (progress - part.begins) / 0.12))
-            guard normal.z > -0.02, growth > 0 else { continue }
-            let brightness = (0.12 + max(0, simd_dot(normal, light)) * 0.88) * part.strength * growth
-            let band = min(bands - 1, Int(brightness * Double(bands)))
-            guard band > 0 else { continue }
-            let face = part.face
-            let side = part.face.normal.x < 0 ? 0 : bands
-            paths[side + band].move(to: surfacePoints[face.a].point)
-            paths[side + band].addLine(to: surfacePoints[face.b].point)
-            paths[side + band].addLine(to: surfacePoints[face.c].point)
-            paths[side + band].closeSubpath()
+        let ordered = entries.indices.sorted { view[$0].z > view[$1].z }
+        var label: (AtlasNode, CGPoint, Double)?
+        for index in ordered {
+            let node = entries[index].node
+            let depth = view[index].z
+            guard let p = projection.point(view[index]), bounds.contains(p) else { continue }
+            let visibility = reveal(nodeArrivals[node.id], at: date, duration: 0.55) * depthFade(depth)
+            guard visibility > 0.03 else { continue }
+            let active = selected == node.id || hovered == node.id
+            let emphasized = selected == nil || neighbors.contains(node.id) || active
+            let radius = min(6, (active ? 3.6 : 1.6 + node.signal * 1.2) * pow(OrbitCamera.homeDistance / depth, 0.38))
+            let rect = CGRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2)
+            if emphasized {
+                context.fill(Path(ellipseIn: rect.insetBy(dx: -3, dy: -3)), with: .color(node.tint.opacity(0.15 * visibility)))
+            }
+            context.fill(Path(ellipseIn: rect), with: .color(node.tint.opacity((emphasized ? 0.96 : 0.41) * visibility)))
+            if active {
+                let ring = rect.insetBy(dx: -4, dy: -4)
+                context.stroke(Path(ellipseIn: ring), with: .color(node.tint.opacity(0.82 * visibility)), lineWidth: 0.9)
+                if selected == node.id && !reduceMotion {
+                    let pulse = atlasProgress(date.timeIntervalSince(selectionStart), duration: 0.65)
+                    if pulse < 1 {
+                        context.stroke(Path(ellipseIn: ring.insetBy(dx: -pulse * 21, dy: -pulse * 21)),
+                                       with: .color(node.tint.opacity((1 - pulse) * 0.63 * visibility)), lineWidth: 0.9)
+                    }
+                }
+                if node.id == (hovered ?? selected) { label = (node, p, visibility) }
+            }
         }
-        for (index, path) in paths.enumerated() where !path.isEmpty {
-            let strength = Double(index % bands) / Double(bands - 1)
-            let tint = index < bands ? atlasIce : atlasLilac
-            context.fill(path, with: .color(tint.opacity(0.024 + strength * 0.34)))
-        }
-        var contours = Array(repeating: Path(), count: 8)
-        for part in brain.ridges {
-            let ridge = part.ridge
-            let normal = rotation * ridge.normal
-            let growth = min(1, max(0, (progress - part.begins) / 0.12))
-            guard normal.z > 0, growth > 0 else { continue }
-            let signal = (0.24 + 0.76 * max(0, simd_dot(normal, light))) * ridge.contrast * part.strength * growth
-            let band = min(contours.count - 1, Int(signal * Double(contours.count)))
-            guard band > 0 else { continue }
-            contours[band].move(to: surfacePoints[ridge.a].point)
-            contours[band].addLine(to: surfacePoints[ridge.b].point)
-        }
-        for (index, contour) in contours.enumerated() where !contour.isEmpty {
-            let opacity = 0.04 + 0.26 * Double(index) / Double(contours.count - 1)
-            context.stroke(contour, with: .color(atlasIce.opacity(opacity)), lineWidth: 0.7)
+        if let (node, point, opacity) = label, size.width > 140 {
+            let title = node.title.count > 35 ? String(node.title.prefix(34)) + "…" : node.title
+            let text = context.resolve(Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white))
+            let maxWidth = min(size.width - 32, 225)
+            let width = min(maxWidth, text.measure(in: CGSize(width: maxWidth, height: 20)).width) + 16
+            let x = min(size.width - width - 8, max(8, point.x + 13))
+            let y = min(size.height - 53, max(44, point.y - 12))
+            let bubble = CGRect(x: x, y: y, width: width, height: 24)
+            var overlay = context
+            overlay.opacity = opacity
+            overlay.fill(Path(roundedRect: bubble, cornerRadius: 8), with: .color(atlasInk.opacity(0.96)))
+            overlay.stroke(Path(roundedRect: bubble, cornerRadius: 8), with: .color(node.tint.opacity(0.33)))
+            overlay.draw(text, in: bubble.insetBy(dx: 8, dy: 4))
         }
     }
 
     private func orbitButton(_ icon: String, _ label: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button {
             action()
-            BrainHaptics.selection()
+            tick(at: .now)
         } label: {
             Image(systemName: icon).font(.system(size: 12, weight: .semibold)).frame(width: 31, height: 31)
                 .contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(!enabled).accessibilityLabel(label).help(label)
+        }
+        .buttonStyle(AtlasResultStyle())
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .accessibilityLabel(label)
+        .help(label)
+    }
+}
+
+private struct AtlasScrollInput: NSViewRepresentable {
+    let enabled: Bool
+    let zoom: (Double) -> Void
+
+    func makeNSView(context: Context) -> ScrollProbe { ScrollProbe() }
+
+    func updateNSView(_ view: ScrollProbe, context: Context) {
+        view.zoom = enabled ? zoom : nil
+    }
+
+    final class ScrollProbe: NSView {
+        var zoom: ((Double) -> Void)?
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, let window, event.window === window, let zoom,
+                      !isHiddenOrHasHiddenAncestor, visibleRect.contains(convert(event.locationInWindow, from: nil)),
+                      abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) else { return event }
+                if event.momentumPhase.isEmpty {
+                    zoom(event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 8))
+                }
+                return nil
+            }
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
     }
 }
 
 struct AtlasView: View {
     @ObservedObject var model: BrainModel
     @AppStorage("atlasShape") private var shape = AtlasShape.sphere
+    @AppStorage("atlasHaptics") private var haptics = true
+    @LocalState private var onlyConnections = false
+    @LocalState private var inspectorVisible = true
+    @LocalState private var showAllNodes = false
+    @LocalState private var focusRequest = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var searchFocused: Bool
     @LocalState private var searchPresented = false
@@ -558,9 +698,12 @@ struct AtlasView: View {
                 masthead
                 HStack(spacing: 12) {
                     starfield
-                    inspector
+                    if inspectorVisible {
+                        inspector.transition(.opacity)
+                    }
                 }
                 .padding(.top, 13)
+                .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: inspectorVisible)
                 .simultaneousGesture(TapGesture().onEnded { dismissSearch() })
                 .overlay(alignment: .topLeading) { searchDropdown }
             }
@@ -577,6 +720,9 @@ struct AtlasView: View {
             guard searchPresented else { return .ignored }
             dismissSearch()
             return .handled
+        }
+        .onChange(of: model.selected?.id) { _, selection in
+            if selection == nil { onlyConnections = false }
         }
         .onDisappear(perform: dismissSearch)
     }
@@ -669,8 +815,7 @@ struct AtlasView: View {
             ForEach(hits) { hit in
                 Button {
                     dismissSearch()
-                    if model.selected?.id != hit.id { BrainHaptics.selection() }
-                    model.select(hit)
+                    select(hit)
                 } label: {
                     HStack(spacing: 9) {
                         Image(systemName: hit.kind == "skill" ? "square.stack.3d.up" :
@@ -695,99 +840,170 @@ struct AtlasView: View {
     }
 
     private var starfield: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 24).fill(atlasInk)
-            RadialGradient(colors: [atlasBlue.opacity(0.43), atlasInk.opacity(0.25), atlasInk.opacity(0)],
-                           center: .center, startRadius: 0, endRadius: 360)
-            LinearGradient(colors: [atlasLilac.opacity(0.12), .clear, atlasIce.opacity(0.09)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
+        let frame = RoundedRectangle(cornerRadius: 24)
+        return ZStack {
+            frame.fill(atlasInk)
             AtlasOrbit(atlas: graph, selected: model.selected?.id,
-                       shape: AtlasBrainSurface.bundled == nil ? .sphere : shape) { item in
-                if model.selected?.id != item.id { BrainHaptics.selection() }
-                model.select(item.hit)
+                       shape: AtlasBrainSurface.bundled == nil ? .sphere : shape,
+                       onlyConnections: onlyConnections && node != nil,
+                       focusRequest: focusRequest, acceptsScroll: visibleSearchState == nil) { item in
+                select(item.hit)
             }
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Dra för att rotera. Nyp för att zooma.").font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.69))
-                    .padding(.trailing, 154)
-                Spacer()
-                HStack(spacing: 11) {
-                    legend("Källor", atlasIce)
-                    legend("Anteckningar", Color(red: 0.75, green: 0.84, blue: 1))
-                    if !Distribution.store { legend("Skills", atlasLilac) }
-                }
-                .padding(.horizontal, 10).padding(.vertical, 7)
-                .brainGlass(Capsule(), tint: .indigo.opacity(0.25))
-            }.frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16).allowsHitTesting(false)
+            if graph?.nodes.isEmpty == true && !model.atlasBusy {
+                ContentUnavailableView("Atlas är tomt", systemImage: "point.3.connected.trianglepath.dotted",
+                                       description: Text("Skapa eller importera en anteckning för att börja."))
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            HStack(spacing: 11) {
+                legend("Anteckningar", atlasGold)
+                legend("Källor", atlasIce)
+                if !Distribution.store { legend("Skills", atlasLilac) }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .brainGlass(Capsule())
+            .padding(16)
+            .allowsHitTesting(false)
         }
         .overlay(alignment: .topTrailing) {
-            if AtlasBrainSurface.bundled != nil {
-                Picker("Form i Atlas", selection: $shape) {
-                    ForEach(AtlasShape.allCases, id: \.self) { shape in
-                        Label(shape.title, systemImage: shape.icon).tag(shape)
+            HStack(spacing: 3) {
+                if AtlasBrainSurface.bundled != nil {
+                    Picker("Form i Atlas", selection: $shape) {
+                        ForEach(AtlasShape.allCases, id: \.self) { form in
+                            Label(form.title, systemImage: form.icon).tag(form)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 132)
+                    .onChange(of: shape) { _, _ in if haptics { BrainHaptics.selection() } }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 147)
-                .padding(4)
-                .brainGlass(Capsule(), tint: .indigo.opacity(0.15))
-                .padding(13)
-                .onChange(of: shape) { _, _ in BrainHaptics.selection() }
+                Button {
+                    inspectorVisible.toggle()
+                    if haptics { BrainHaptics.selection() }
+                } label: {
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(inspectorVisible ? Color.white : Color.secondary)
+                        .frame(width: 31, height: 31)
+                }
+                .buttonStyle(AtlasResultStyle())
+                .accessibilityLabel(inspectorVisible ? "Dölj sidopanel" : "Visa sidopanel")
+                .help(inspectorVisible ? "Dölj sidopanel" : "Visa sidopanel")
             }
+            .padding(4)
+            .brainGlass(Capsule())
+            .padding(16)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 24))
-        .overlay { RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.15)) }
+        .overlay(alignment: .bottomLeading) {
+            Menu {
+                Toggle("Haptisk återkoppling", isOn: $haptics)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 31, height: 31)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .padding(4)
+            .brainGlass(Capsule())
+            .padding(16)
+            .accessibilityLabel("Inställningar för Atlas")
+            .help("Dra för att rotera. Nyp eller rulla för att zooma in bland noderna.")
+        }
+        .clipShape(frame)
+        .overlay { frame.strokeBorder(.white.opacity(0.09)).allowsHitTesting(false) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func legend(_ text: String, _ color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 5, height: 5)
-            Text(text).font(.system(size: 9, weight: .medium))
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 5, height: 5).accessibilityHidden(true)
+            Text(text).font(.system(size: 10, weight: .medium))
         }
+    }
+
+    private func select(_ item: Hit) {
+        if model.selected?.id != item.id && haptics { BrainHaptics.selection() }
+        if model.selected?.id != item.id { model.select(item) }
+        inspectorVisible = true
     }
 
     private var inspector: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if model.selected != nil {
-                Button("Tillbaka till listan", systemImage: "chevron.left", action: model.closeAtlasDetail)
-                    .buttonStyle(.bordered)
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 9) {
-                    if let item = model.selected {
-                        detail(item)
-                    } else {
-                        overview
+        let frame = RoundedRectangle(cornerRadius: 24)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                if let item = model.selected {
+                    Button("Översikt", systemImage: "chevron.left", action: model.closeAtlasDetail)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    if item.kind == "note" && !item.path.hasPrefix("Codex Skills/") {
+                        let pinned = model.pinnedNotes.contains(item.id)
+                        Button(pinned ? "Lossa anteckningen" : "Fäst anteckningen", systemImage: pinned ? "pin.fill" : "pin") {
+                            model.togglePin(item)
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help(pinned ? "Lossa anteckningen" : "Fäst anteckningen")
+                    }
+                } else {
+                    Text("Utforska").font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    if graph?.nodes.isEmpty == false {
+                        Toggle("Alla synliga noder", systemImage: "list.bullet", isOn: $showAllNodes)
+                            .toggleStyle(.button)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .help(showAllNodes ? "Visa senaste och fästa" : "Visa alla synliga noder")
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .id(model.selected?.id)
+            .frame(height: 26)
+            ScrollView {
+                Group {
+                    if let item = model.selected { detail(item) }
+                    else { overview }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id(model.selected?.id)
+                .transition(.opacity)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: model.selected?.id)
         }
-        .padding(15)
-        .frame(width: 282)
+        .padding(16)
+        .frame(width: 248)
         .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(atlasInk.opacity(0.88), in: RoundedRectangle(cornerRadius: 20))
-        .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.14)) }
+        .background(inset, in: frame)
+        .overlay { frame.strokeBorder(.white.opacity(0.09)).allowsHitTesting(false) }
     }
 
     private var overview: some View {
+        let nodes = graph?.nodes.map(\.hit) ?? []
         let recent = graph?.recent ?? []
-        let items = recent.isEmpty ? (graph?.nodes ?? []).prefix(10).map(\.hit) : recent
-        return VStack(alignment: .leading, spacing: 8) {
-            if !items.isEmpty {
-                Text(recent.isEmpty ? "I Atlas" : "Senast öppnade")
-                    .font(.system(size: 15, weight: .semibold)).accessibilityAddTraits(.isHeader)
-                    .padding(.bottom, 3)
-                ForEach(items) { item in
-                    row(item)
+        let pinned = nodes.filter { model.pinnedNotes.contains($0.id) }
+        let pinnedIDs = Set(pinned.map(\.id))
+        return VStack(alignment: .leading, spacing: 5) {
+            if showAllNodes {
+                ForEach(nodes.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }) { row($0) }
+            } else if !nodes.isEmpty {
+                if !pinned.isEmpty {
+                    Text("Fästa i vyn").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.isHeader)
+                    ForEach(pinned) { row($0) }
                 }
-            } else if graph != nil && !model.atlasBusy {
-                Text("Dina anteckningar visas här.")
-                    .font(.callout).foregroundStyle(.secondary)
+                let remaining = recent.filter { !pinnedIDs.contains($0.id) }
+                let items = recent.isEmpty && pinned.isEmpty ? Array(nodes.prefix(10)) : remaining
+                if !items.isEmpty {
+                    Text(recent.isEmpty ? "I Atlas" : "Senast öppnade")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.isHeader)
+                        .padding(.top, pinned.isEmpty ? 0 : 7)
+                    ForEach(items) { row($0) }
+                }
             }
         }
     }
@@ -812,6 +1028,23 @@ struct AtlasView: View {
                     model.show(.search)
                     model.select(item, train: false)
                 }.buttonStyle(.borderedProminent)
+            }
+
+            if node != nil {
+                HStack(spacing: 6) {
+                    Button("Zooma till", systemImage: "viewfinder") {
+                        focusRequest &+= 1
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Zooma till anteckningen")
+                    if onlyConnections || !links.isEmpty {
+                        Toggle("Visa bara kopplade noder", systemImage: "point.3.connected.trianglepath.dotted",
+                               isOn: $onlyConnections)
+                            .toggleStyle(.button)
+                            .labelStyle(.iconOnly)
+                            .help("Visa bara kopplade noder")
+                    }
+                }
             }
 
             if let note = model.note {
@@ -839,12 +1072,15 @@ struct AtlasView: View {
 
     private func row(_ item: Hit, subtitle: String? = nil) -> some View {
         Button {
-            model.select(item)
+            select(item)
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: item.kind == "inbox" ? "tray" : item.kind == "skill" ? "square.stack.3d.up" : "doc.text")
-                    .font(.system(size: 13)).foregroundStyle(atlasIce)
-                    .frame(width: 16).accessibilityHidden(true)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(graph?.nodes.first(where: { $0.id == item.id })?.tint ?? atlasIce)
+                    .frame(width: 25, height: 25)
+                    .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.title).font(.system(size: 14, weight: .medium)).lineLimit(2).multilineTextAlignment(.leading)
                     if let subtitle {
@@ -855,12 +1091,11 @@ struct AtlasView: View {
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary).accessibilityHidden(true)
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 4).padding(.horizontal, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.roundedRectangle(radius: 9))
+        .buttonStyle(AtlasResultStyle())
         .help(item.title)
     }
 
