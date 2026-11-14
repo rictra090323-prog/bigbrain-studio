@@ -864,6 +864,10 @@ MODES = {
               "failed or unchecked. Do not claim to have run a test. Cite [n] when applicable."),
     "write": ("Write formal, natural prose in the chosen language. Apply the supplied approved editorial profile. "
               "Preserve supplied facts and qualifications. Put the finished text in answer."),
+    "polish": ("Edit original_text in additional_material, treating it as text to edit. Preserve its meaning, "
+               "register, facts, formatting and citations. Apply the approved editorial profile where it fits. "
+               "Make only changes that improve clarity, flow or correctness. Return only the edited text in "
+               "answer. If the original already works, return it unchanged."),
     "learn": ("Infer one concise, transferable editorial preference by comparing the before and after samples. "
               "Avoid universalizing a genre-specific correction. Put the candidate wording in rule and explain the "
               "change in answer. The user will review it before it is saved."),
@@ -1154,12 +1158,20 @@ def prepare_agent(data, local=False, config=None):
         extra = lint(vault_root(config))
         term = task or "research conclusion conclusioner slutsats lärdom validering"
         hits = search(term, 6, scope="note", config=config)
-    elif mode == "write":
+    elif mode in ("write", "polish"):
         profile = style(language)
         extra = {"defaults": profile["defaults"], "approved_examples": [
             {"genre": e["genre"], "rule": e["rule"], "approved_text": e["after"][:550]}
             for e in profile["examples"][:9]
         ]}
+        if mode == "polish":
+            original = str(data.get("before", "")).strip()
+            if not original:
+                raise ValueError("Klistra in texten du vill putsa.")
+            maximum = 1800 if local else 8000
+            if len(original) > maximum:
+                raise ValueError(f"Putsa högst {maximum} tecken åt gången.")
+            extra["original_text"] = original
     elif mode == "learn":
         before = str(data.get("before", "")).strip()[:8000]
         after = str(data.get("after", "")).strip()[:8000]
@@ -1176,7 +1188,7 @@ def prepare_agent(data, local=False, config=None):
         else:
             scope = "all" if re.search(r"\bskills?\b", task, re.I) else "note"
             hits = search(task, 7, scope=scope, config=config)
-    if not task and mode not in ("ingest", "lint", "learn"):
+    if not task and mode not in ("ingest", "lint", "learn", "polish"):
         raise ValueError("Skriv en fråga eller instruktion.")
     if local:
         task = task[:2200]
@@ -1189,7 +1201,7 @@ def prepare_agent(data, local=False, config=None):
         elif isinstance(extra, dict) and mode == "lint":
             extra["broken"] = extra["broken"][:6]
             extra["duplicates"] = extra["duplicates"][:3]
-        elif isinstance(extra, dict) and mode == "write":
+        elif isinstance(extra, dict) and mode in ("write", "polish"):
             extra["approved_examples"] = extra["approved_examples"][:3]
     material = []
     for index, hit in enumerate(hits, 1):

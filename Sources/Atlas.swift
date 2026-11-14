@@ -258,7 +258,7 @@ private struct AtlasOrbit: View {
     let onlyConnections: Bool
     let focusRequest: Int
     let acceptsScroll: Bool
-    let choose: (AtlasNode) -> Void
+    let choose: (AtlasNode?) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("atlasHaptics") private var haptics = true
@@ -276,6 +276,7 @@ private struct AtlasOrbit: View {
     @LocalState private var nodeArrivals: [String: Date] = [:]
     @LocalState private var edgeArrivals: [String: Date] = [:]
     @LocalState private var selectionStart = Date.distantPast
+    @LocalState private var lightPulses: [String: Date] = [:]
     @LocalState private var morphStart = Date.distantPast
     @LocalState private var morphOrigin = 0.0
     @LocalState private var morphTarget = 0.0
@@ -286,6 +287,13 @@ private struct AtlasOrbit: View {
 
     private var nodes: [AtlasNode] { atlas?.nodes ?? [] }
     private var visibleEdges: [AtlasEdge] { atlas?.edges ?? [] }
+
+    private var pulseRoutes: [String] {
+        guard !reduceMotion else { return [] }
+        return visibleEdges.filter { edge in
+            edge.kind != "suggested" && (selected == nil || edge.a == selected || edge.b == selected)
+        }.map(\.id).sorted()
+    }
 
     private var connectedIDs: Set<String> {
         guard let selected else { return [] }
@@ -301,8 +309,9 @@ private struct AtlasOrbit: View {
         GeometryReader { geometry in
             Rectangle().fill(.clear)
                 .overlay {
-                    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion || !animating)) { timeline in
-                        let date = animating && !reduceMotion ? timeline.date : Date.now
+                    let live = !reduceMotion && (animating || !lightPulses.isEmpty)
+                    TimelineView(.animation(minimumInterval: animating ? 1.0 / 60 : 1.0 / 30, paused: !live)) { timeline in
+                        let date = live ? timeline.date : Date.now
                         Canvas { context, size in drawGraph(context, size: size, at: date) }
                     }
                     .allowsHitTesting(false)
@@ -322,7 +331,8 @@ private struct AtlasOrbit: View {
                         lastPinch = scale
                     })
                 .simultaneousGesture(SpatialTapGesture().onEnded { value in
-                    if let entry = hit(at: value.location, size: geometry.size) { choose(entry.node) }
+                    let tapped = hit(at: value.location, size: geometry.size)?.node
+                    choose(tapped?.id == selected ? nil : tapped)
                 })
                 .onContinuousHover { phase in
                     if case .active(let point) = phase, dragOrigin == nil, motion == nil {
@@ -396,6 +406,26 @@ private struct AtlasOrbit: View {
                 animationUntil = .distantPast
                 animating = false
             }
+        }
+        .task(id: pulseRoutes) {
+            let routes = pulseRoutes
+            lightPulses = [:]
+            guard !routes.isEmpty else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(selected == nil ? 1200 : 220))
+                var cursor = Int.random(in: routes.indices)
+                while !Task.isCancelled {
+                    let count = min(selected == nil ? 3 : 5, routes.count)
+                    let start = Date.now
+                    lightPulses = Dictionary(uniqueKeysWithValues: (0..<count).map { index in
+                        (routes[(cursor + index) % routes.count], start.addingTimeInterval(Double(index) * 0.19))
+                    })
+                    cursor = (cursor + count) % routes.count
+                    try await Task.sleep(for: .seconds(1.8))
+                    lightPulses = [:]
+                    try await Task.sleep(for: .seconds(selected == nil ? 2.3 : 1.35))
+                }
+            } catch { return }
         }
         .task(id: animationUntil) {
             let remaining = animationUntil.timeIntervalSinceNow
@@ -620,6 +650,12 @@ private struct AtlasOrbit: View {
             context.stroke(path, with: .color(tint.opacity(opacity)),
                            style: StrokeStyle(lineWidth: active ? 1.35 : 0.65, lineCap: .round,
                                               dash: suggested ? [1, 4] : learned ? [3, 4] : []))
+            if !reduceMotion, amount >= 1, let launch = lightPulses[edge.id] {
+                let leading = edge.b == selected ? end : start
+                let destination = edge.b == selected ? start : end
+                drawPulse(context, projection: projection, from: leading, to: destination,
+                          elapsed: date.timeIntervalSince(launch), tint: tint)
+            }
         }
 
         let ordered = entries.indices.sorted { view[$0].z > view[$1].z }
@@ -665,6 +701,28 @@ private struct AtlasOrbit: View {
             overlay.stroke(Path(roundedRect: bubble, cornerRadius: 8), with: .color(node.tint.opacity(0.33)))
             overlay.draw(text, in: bubble.insetBy(dx: 8, dy: 4))
         }
+    }
+
+    private func drawPulse(_ context: GraphicsContext, projection: OrbitCamera.Projection,
+                           from start: SIMD3<Double>, to end: SIMD3<Double>, elapsed: Double, tint: Color) {
+        let progress = elapsed / 0.92
+        guard progress > 0, progress < 1 else { return }
+        let head = start + (end - start) * progress
+        let fade = min(1, progress * 12, (1 - progress) * 10) * depthFade(head.z)
+        guard fade > 0, let point = projection.point(head) else { return }
+        var tail = Path()
+        let trailing = start + (end - start) * max(0, progress - 0.19)
+        if let (from, to) = projection.segment(trailing, head) {
+            tail.move(to: from)
+            tail.addLine(to: to)
+            context.stroke(tail, with: .linearGradient(
+                Gradient(colors: [.clear, tint.opacity(0.85 * fade)]), startPoint: from, endPoint: to),
+                style: StrokeStyle(lineWidth: 2.3, lineCap: .round))
+        }
+        let halo = CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10)
+        context.fill(Path(ellipseIn: halo), with: .radialGradient(
+            Gradient(colors: [tint.opacity(0.62 * fade), .clear]), center: point, startRadius: 0, endRadius: 5))
+        context.fill(Path(ellipseIn: halo.insetBy(dx: 3.8, dy: 3.8)), with: .color(.white.opacity(fade)))
     }
 
     private func orbitButton(_ icon: String, _ label: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
@@ -766,8 +824,13 @@ struct AtlasView: View {
             await model.loadAtlas()
         }
         .onKeyPress(.escape) {
-            guard searchPresented else { return .ignored }
-            dismissSearch()
+            if searchPresented {
+                dismissSearch()
+            } else if model.selected != nil {
+                model.closeAtlasDetail()
+            } else {
+                return .ignored
+            }
             return .handled
         }
         .onChange(of: model.selected?.id) { _, selection in
@@ -899,7 +962,11 @@ struct AtlasView: View {
                        shape: AtlasBrainSurface.bundled == nil ? .sphere : shape,
                        onlyConnections: onlyConnections && node != nil,
                        focusRequest: focusRequest, acceptsScroll: visibleSearchState == nil) { item in
-                select(item.hit)
+                if let item {
+                    select(item.hit)
+                } else if model.selected != nil {
+                    model.closeAtlasDetail()
+                }
             }
             if graph?.nodes.isEmpty == true && !model.atlasBusy {
                 ContentUnavailableView("Atlas är tomt", systemImage: "point.3.connected.trianglepath.dotted",
@@ -984,7 +1051,7 @@ struct AtlasView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 if let item = model.selected {
-                    Button("Översikt", systemImage: "chevron.left", action: model.closeAtlasDetail)
+                    Button("Avmarkera", systemImage: "xmark", action: model.closeAtlasDetail)
                         .buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium))
                     Spacer()

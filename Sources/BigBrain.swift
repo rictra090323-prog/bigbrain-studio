@@ -670,7 +670,7 @@ final class BrainModel: ObservableObject {
                 ? try await DeviceModel.run(input)
                 : try await Bridge.invoke(["agent"], input: input)
             guard library == libraryGeneration else { return nil }
-            if mode != "learn" && mode != "write" { reply = result }
+            if mode != "learn" && mode != "write" && mode != "polish" { reply = result }
             if result.proposal != nil { await refresh(); notify("Nytt ändringsförslag") }
             return result
         } catch {
@@ -1854,7 +1854,11 @@ struct EditorField: View {
 
 struct WritingView: View {
     @ObservedObject var model: BrainModel
-    @LocalState private var brief = ""
+    @LocalState private var showingLearning = false
+    @LocalState private var source = ""
+    @LocalState private var polishedOriginal = ""
+    @LocalState private var draft = ""
+    @LocalState private var showRules = false
     @LocalState private var before = ""
     @LocalState private var after = ""
     @LocalState private var rule = ""
@@ -1867,8 +1871,10 @@ struct WritingView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 6) {
-                        SmallLabel(text: "Stilateljé  /  Redaktionsminne", tint: lime)
-                        Text("Formell prosa, med egen rytm").font(.system(size: 28, weight: .medium, design: .serif))
+                        Text("Skrivcoach").font(.system(size: 36, weight: .medium)).tracking(-1.8)
+                            .accessibilityAddTraits(.isHeader)
+                        Text("Klistra in texten du vill putsa. Välj samma språk som i originalet.")
+                            .font(.callout).foregroundStyle(muted)
                     }
                     Spacer()
                     Picker("Språk", selection: $model.language) {
@@ -1876,88 +1882,33 @@ struct WritingView: View {
                         Text("English").tag("en")
                     }.pickerStyle(.segmented).frame(width: 174).disabled(model.running || learning)
                 }
-                Panel {
-                    VStack(alignment: .leading, spacing: 10) {
-                        EditorField(title: "Vad ska texten göra?", text: $brief, height: 78)
-                        HStack {
-                            ActionButton(title: model.running ? "Arbetar…" : "Skriv utkast", icon: "pencil.line", primary: true) {
-                                Task {
-                                    if let result = await model.run("write", query: brief), let answer = result.answer {
-                                        before = answer
-                                        after = answer
-                                        rule = ""
-                                        comparison = ""
-                                    }
-                                }
-                            }.disabled(model.running || brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            if !before.isEmpty {
-                                ActionButton(title: "Kopiera utkast", icon: "square.on.square") { model.copy(before) }
-                            }
-                        }
-                    }
-                }
-                Panel {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            SmallLabel(text: "Lär av en godkänd redigering", tint: lime)
-                            Spacer()
-                            Badge(text: model.language.uppercased())
-                        }
-                        HStack(alignment: .top, spacing: 10) {
-                            EditorField(title: "Före", text: $before, height: 110)
-                            EditorField(title: "Godkänd version", text: $after, height: 110)
-                        }
-                        TextField("Genre eller sammanhang, t.ex. forskningsrapport", text: $genre).textFieldStyle(.roundedBorder)
-                        TextField("Redaktionsregel för framtida texter", text: $rule, axis: .vertical)
-                            .textFieldStyle(.roundedBorder).lineLimit(1...3)
-                        if !comparison.isEmpty {
-                            Text(comparison).font(.system(size: 12)).foregroundStyle(muted).textSelection(.enabled)
-                        }
-                        HStack {
-                            ActionButton(title: "Föreslå en regel", icon: "sparkle") {
-                                Task {
-                                    if let result = await model.run("learn", before: before, after: after, genre: genre) {
-                                        rule = result.rule ?? ""
-                                        comparison = result.answer ?? ""
-                                    }
-                                }
-                            }.disabled(model.running || before.isEmpty || after.isEmpty || before == after)
-                            ActionButton(title: "Godkänn och lär", icon: "checkmark", primary: true) {
-                                Task {
-                                    guard !learning else { return }
-                                    learning = true
-                                    defer { learning = false }
-                                    if await model.learn(before: before, after: after, genre: genre, rule: rule) {
-                                        before = ""; after = ""; rule = ""; comparison = ""
-                                    }
-                                }
-                            }.disabled(learning || before.isEmpty || after.isEmpty || before == after || rule.trimmingCharacters(in: .whitespaces).isEmpty)
-                        }
-                    }
+                draftPanel
+
+                DisclosureGroup("Lär Skrivcoach din stil", isExpanded: $showingLearning) {
+                    learningPanel.padding(.top, 8)
                 }
                 if let profile = model.profile, profile.language == model.language {
                     Panel {
-                        VStack(alignment: .leading, spacing: 9) {
-                            HStack {
-                                SmallLabel(text: "Profilens regler")
-                                Spacer()
-                                Badge(text: "\(profile.examples.count) LÄRDA")
-                            }
-                            ForEach(profile.defaults, id: \.self) { value in
-                                Text(value).font(.system(size: 12)).foregroundStyle(muted)
-                            }
-                            ForEach(profile.examples) { item in
-                                Divider()
-                                HStack(alignment: .top) {
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(item.rule).font(.system(size: 12, weight: .medium)).textSelection(.enabled)
-                                        if !item.genre.isEmpty { Text(item.genre).font(.system(size: 10)).foregroundStyle(muted) }
+                        DisclosureGroup("Skrivprofil · \(profile.examples.count) sparade regler", isExpanded: $showRules) {
+                            VStack(alignment: .leading, spacing: 9) {
+                                ForEach(profile.defaults, id: \.self) { value in
+                                    Text(value).font(.system(size: 12)).foregroundStyle(muted)
+                                }
+                                ForEach(profile.examples) { item in
+                                    Divider()
+                                    HStack(alignment: .top) {
+                                        VStack(alignment: .leading, spacing: 5) {
+                                            Text(item.rule).font(.system(size: 12, weight: .medium)).textSelection(.enabled)
+                                            if !item.genre.isEmpty { Text(item.genre).font(.system(size: 10)).foregroundStyle(muted) }
+                                        }
+                                        Spacer()
+                                        Button { model.forget(item) } label: { Image(systemName: "trash").foregroundStyle(muted) }
+                                            .buttonStyle(.plain).accessibilityLabel("Ta bort regeln")
+                                            .disabled(model.running || learning)
                                     }
-                                    Spacer()
-                                    Button { model.forget(item) } label: { Image(systemName: "trash").foregroundStyle(muted) }
-                                        .buttonStyle(.plain).accessibilityLabel("Ta bort regeln")
                                 }
                             }
+                            .padding(.top, 8)
                         }
                     }
                 }
@@ -1965,9 +1916,106 @@ struct WritingView: View {
         }
         .task(id: model.language) { await model.loadStyle() }
         .onChange(of: model.language) { _, _ in
-            before = ""; after = ""; rule = ""; genre = ""; comparison = ""
+            draft = ""
+            before = ""
+            after = ""
+            rule = ""
+            genre = ""
+            comparison = ""
         }
     }
+
+    private var draftPanel: some View {
+        Panel {
+            VStack(alignment: .leading, spacing: 12) {
+                EditorField(title: "Din text", text: $source, height: 145)
+                    .disabled(model.running)
+                ActionButton(title: model.running ? "Arbetar…" : "Putsa texten", icon: "sparkle", primary: true) {
+                    let original = source
+                    Task {
+                        if let result = await model.run("polish", before: original),
+                           let answer = result.answer, !answer.isEmpty {
+                            polishedOriginal = original
+                            draft = answer
+                        }
+                    }
+                }
+                .disabled(model.running || learning || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                if !draft.isEmpty {
+                    EditorField(title: "Förslag · går att redigera", text: $draft, height: 145)
+                        .disabled(model.running)
+                    HStack(spacing: 8) {
+                        ActionButton(title: "Kopiera förslaget", icon: "square.on.square") { model.copy(draft) }
+                        ActionButton(title: "Lär av ändringen", icon: "arrow.down") {
+                            before = polishedOriginal
+                            after = draft
+                            rule = ""
+                            comparison = ""
+                            showingLearning = true
+                        }
+                    }
+                    .disabled(model.running || learning)
+                }
+            }
+        }
+    }
+
+    private var hasRevision: Bool {
+        let original = before.trimmingCharacters(in: .whitespacesAndNewlines)
+        let revised = after.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !original.isEmpty && !revised.isEmpty && original != revised
+    }
+
+    private var learningPanel: some View {
+        Panel {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Jämför två versioner av samma text. En sparad regel används nästa gång du putsar text på valt språk.")
+                    .font(.callout).foregroundStyle(muted)
+                HStack(alignment: .top, spacing: 10) {
+                    EditorField(title: "Originaltext", text: $before, height: 140)
+                    EditorField(title: "Din redigering", text: $after, height: 140)
+                }
+                .disabled(model.running || learning)
+                TextField("Typ av text, t.ex. labbrapport (valfritt)", text: $genre)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(model.running || learning)
+                ActionButton(title: model.running ? "Jämför…" : "Föreslå stilregel", icon: "sparkle") {
+                    Task {
+                        if let result = await model.run("learn", before: before, after: after, genre: genre) {
+                            rule = result.rule ?? ""
+                            comparison = result.answer ?? ""
+                        }
+                    }
+                }
+                .disabled(model.running || learning || !hasRevision)
+
+                if !comparison.isEmpty {
+                    Text(comparison).font(.callout).foregroundStyle(muted).textSelection(.enabled)
+                }
+                TextField("Stilregel att spara", text: $rule, axis: .vertical)
+                    .textFieldStyle(.roundedBorder).lineLimit(1...3)
+                    .disabled(model.running || learning)
+                ActionButton(title: learning ? "Sparar…" : "Spara stilregel", icon: "checkmark", primary: true) {
+                    Task {
+                        guard !learning else { return }
+                        learning = true
+                        defer { learning = false }
+                        if await model.learn(before: before, after: after, genre: genre, rule: rule) {
+                            before = ""
+                            after = ""
+                            rule = ""
+                            comparison = ""
+                            showRules = true
+                        }
+                    }
+                }
+                .disabled(model.running || learning || !hasRevision ||
+                          rule.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
 }
 
 struct SettingsView: View {
