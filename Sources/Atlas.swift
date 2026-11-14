@@ -988,7 +988,8 @@ struct AtlasView: View {
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 6) {
                 if AtlasBrainSurface.bundled != nil {
-                    AtlasShapeSwitch(selection: $shape) {
+                    GlassSegmentedControl(selection: $shape, options: AtlasShape.allCases,
+                                          label: "Form i Atlas", segmentWidth: 58, title: { $0.title }) {
                         if haptics { BrainHaptics.selection() }
                     }
                 }
@@ -1248,12 +1249,16 @@ struct AtlasView: View {
     }
 }
 
-private struct AtlasShapeSwitch: View {
-    @Binding var selection: AtlasShape
-    let onChange: () -> Void
+struct GlassSegmentedControl<Option: Hashable>: View {
+    @Binding var selection: Option
+    let options: [Option]
+    let label: String
+    let segmentWidth: CGFloat
+    let title: (Option) -> String
+    var onChange: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let segmentWidth: CGFloat = 58
+    @Environment(\.isEnabled) private var isEnabled
     private let segmentHeight: CGFloat = 31
 
     var body: some View {
@@ -1262,37 +1267,40 @@ private struct AtlasShapeSwitch: View {
                 .fill(atlasInk.opacity(0.36))
                 .overlay { Capsule().strokeBorder(.white.opacity(0.15)) }
 
-            Color.clear
-                .frame(width: segmentWidth, height: segmentHeight)
-                .brainGlass(Capsule(), tint: .white.opacity(0.22))
-                .overlay { Capsule().strokeBorder(.white.opacity(0.16)) }
-                .offset(x: selection == .sphere ? 3 : 3 + segmentWidth)
-                .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78), value: selection)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            if let index = options.firstIndex(of: selection) {
+                Color.clear
+                    .frame(width: segmentWidth, height: segmentHeight)
+                    .brainGlass(Capsule(), tint: .white.opacity(0.22))
+                    .overlay { Capsule().strokeBorder(.white.opacity(0.16)) }
+                    .offset(x: 3 + CGFloat(index) * segmentWidth)
+                    .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.78), value: selection)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
 
             HStack(spacing: 0) {
-                ForEach(AtlasShape.allCases, id: \.self) { form in
+                ForEach(options, id: \.self) { option in
                     Button {
-                        guard selection != form else { return }
-                        selection = form
+                        guard selection != option else { return }
+                        selection = option
                         onChange()
                     } label: {
-                        Text(form.title)
+                        Text(title(option))
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white.opacity(selection == form ? 1 : 0.72))
+                            .foregroundStyle(.white.opacity(selection == option ? 1 : 0.72))
                             .frame(width: segmentWidth, height: segmentHeight)
                             .contentShape(Capsule())
                     }
                     .buttonStyle(AtlasResultStyle(capsule: true))
-                    .accessibilityAddTraits(selection == form ? [.isSelected] : [])
+                    .accessibilityAddTraits(selection == option ? [.isSelected] : [])
                 }
             }
             .padding(3)
         }
         .fixedSize()
+        .opacity(isEnabled ? 1 : 0.55)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Form i Atlas")
+        .accessibilityLabel(label)
     }
 }
 

@@ -1877,10 +1877,17 @@ struct WritingView: View {
                             .font(.callout).foregroundStyle(muted)
                     }
                     Spacer()
-                    Picker("Språk", selection: $model.language) {
-                        Text("Svenska").tag("sv")
-                        Text("English").tag("en")
-                    }.pickerStyle(.segmented).frame(width: 174).disabled(model.running || learning)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Språk")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(muted)
+                            .accessibilityHidden(true)
+                        GlassSegmentedControl(selection: $model.language, options: ["sv", "en"],
+                                              label: "Språk", segmentWidth: 72,
+                                              title: { $0 == "sv" ? "Svenska" : "English" })
+                    }
+                    .fixedSize()
+                    .disabled(model.running || learning)
                 }
                 draftPanel
 
