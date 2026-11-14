@@ -1058,8 +1058,9 @@ struct Sidebar: View {
         }
         .padding(.horizontal, 11).padding(.top, 18).padding(.bottom, 17)
         .frame(width: 157)
-        .brainGlass(RoundedRectangle(cornerRadius: 24))
+        .brainGlass(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .padding(.leading, 12).padding(.top, 36).padding(.bottom, 12)
+        .padding(.trailing, model.section == .atlas ? 10 : 0)
     }
 }
 
@@ -1236,6 +1237,7 @@ struct QueryBox: View {
     var prominent = false
     var focus: FocusState<Bool>.Binding?
     var attachedResults = false
+    var backgroundColor: Color? = nil
     var action: () -> Void
     private var searchFocus: FocusState<Bool>.Binding { focus ?? $fieldFocused }
 
@@ -1254,9 +1256,11 @@ struct QueryBox: View {
         .font(prominent ? Self.prominentFont : .body)
         .padding(.horizontal, prominent ? 17 : 12)
         .padding(.vertical, prominent ? 15 : 10)
-        .background(inset.opacity(prominent ? 0.55 : 1), in: outline)
+        .background(backgroundColor ?? inset.opacity(prominent ? 0.55 : 1), in: outline)
         .background {
-            if prominent { outline.fill(.clear).brainGlass(outline, tint: .indigo.opacity(0.16)) }
+            if prominent {
+                outline.fill(.clear).brainGlass(outline, tint: backgroundColor == nil ? .indigo.opacity(0.16) : nil)
+            }
         }
         .overlay {
             outline.strokeBorder(attachedResults || searchFocus.wrappedValue ? Self.focusBorder : .white.opacity(0.18))
@@ -2307,6 +2311,9 @@ struct RootView: View {
                 case .settings: SettingsView(model: model)
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .background {
+            if model.section == .atlas { atlasInk.ignoresSafeArea() }
         }
     }
 

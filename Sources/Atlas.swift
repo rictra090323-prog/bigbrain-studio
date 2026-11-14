@@ -48,7 +48,7 @@ struct AtlasSnapshot: Decodable, Sendable {
     let learned: Int
 }
 
-private let atlasInk = Color(red: 0.018, green: 0.022, blue: 0.035)
+let atlasInk = Color(red: 0.018, green: 0.022, blue: 0.035)
 private let atlasIce = Color(red: 0.38, green: 0.91, blue: 0.86)
 private let atlasLilac = Color(red: 0.78, green: 0.66, blue: 1)
 private let atlasGold = Color(red: 1, green: 0.76, blue: 0.42)
@@ -258,6 +258,7 @@ private struct AtlasOrbit: View {
     let onlyConnections: Bool
     let focusRequest: Int
     let acceptsScroll: Bool
+    let scrollExclusion: CGRect?
     let choose: (AtlasNode?) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -317,7 +318,7 @@ private struct AtlasOrbit: View {
                     .allowsHitTesting(false)
                 }
                 .background {
-                    AtlasScrollInput(enabled: acceptsScroll) { delta in
+                    AtlasScrollInput(enabled: acceptsScroll, exclusion: scrollExclusion) { delta in
                         zoom(by: exp(delta * 0.012), animated: false)
                     }
                 }
@@ -743,17 +744,21 @@ private struct AtlasOrbit: View {
 
 private struct AtlasScrollInput: NSViewRepresentable {
     let enabled: Bool
+    let exclusion: CGRect?
     let zoom: (Double) -> Void
 
     func makeNSView(context: Context) -> ScrollProbe { ScrollProbe() }
 
     func updateNSView(_ view: ScrollProbe, context: Context) {
         view.zoom = enabled ? zoom : nil
+        view.exclusion = exclusion
     }
 
     final class ScrollProbe: NSView {
         var zoom: ((Double) -> Void)?
+        var exclusion: CGRect?
         private var monitor: Any?
+        override var isFlipped: Bool { true }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -761,8 +766,10 @@ private struct AtlasScrollInput: NSViewRepresentable {
             guard window != nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
                 guard let self, let window, event.window === window, let zoom,
-                      !isHiddenOrHasHiddenAncestor, visibleRect.contains(convert(event.locationInWindow, from: nil)),
+                      !isHiddenOrHasHiddenAncestor,
                       abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) else { return event }
+                let location = convert(event.locationInWindow, from: nil)
+                guard visibleRect.contains(location), exclusion?.contains(location) != true else { return event }
                 if event.momentumPhase.isEmpty {
                     zoom(event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 8))
                 }
@@ -788,6 +795,10 @@ struct AtlasView: View {
     @LocalState private var searchPresented = false
     private let searchRowHeight: CGFloat = 36
     private let searchPanelPadding: CGFloat = 7
+    private let canvasInset: CGFloat = 16
+    private let inspectorWidth: CGFloat = 248
+    private let inspectorTop: CGFloat = 66
+    private let inspectorBottom: CGFloat = 66
 
     private var graph: AtlasSnapshot? { model.atlas }
     private var node: AtlasNode? { graph?.nodes.first { $0.id == model.selected?.id } }
@@ -800,26 +811,18 @@ struct AtlasView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            VStack(alignment: .leading, spacing: 0) {
-                masthead
-                HStack(spacing: 12) {
-                    starfield
-                    if inspectorVisible {
-                        inspector.transition(.opacity)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            masthead.padding(.horizontal, 21)
+            starfield
+                .overlay(alignment: .top) {
+                    searchDropdown.padding(.horizontal, 21)
                 }
-                .padding(.top, 13)
-                .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: inspectorVisible)
-                .simultaneousGesture(TapGesture().onEnded { dismissSearch() })
-                .overlay(alignment: .topLeading) { searchDropdown }
-            }
             footer
+                .padding(.horizontal, 21)
                 .simultaneousGesture(TapGesture().onEnded { dismissSearch() })
         }
-        .padding(.horizontal, 21)
-        .padding(.top, 14)
-        .padding(.bottom, 19)
+        .padding(.top, 6)
+        .padding(.bottom, 14)
         .task(id: model.dashboard?.config.vault) {
             await model.loadAtlas()
         }
@@ -856,7 +859,9 @@ struct AtlasView: View {
             }
             QueryBox(query: $model.query, placeholder: "Sök med ord, begrepp eller en fråga…",
                      autofocus: false, prominent: true, focus: $searchFocused,
-                     attachedResults: visibleSearchState != nil, action: model.searchFromAtlas)
+                     attachedResults: visibleSearchState != nil,
+                     backgroundColor: .white.opacity(0.065), action: model.searchFromAtlas)
+                .accessibilityIdentifier("atlas-search")
                 .simultaneousGesture(TapGesture().onEnded { searchPresented = true })
                 .onChange(of: model.query) { _, _ in
                     if searchFocused { searchPresented = true }
@@ -902,8 +907,8 @@ struct AtlasView: View {
             .font(QueryBox.prominentFont)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(height: searchRowHeight * CGFloat(rowCount) + searchPanelPadding * 2, alignment: .topLeading)
-            .background(inset.opacity(0.55), in: searchPanelShape)
-            .brainGlass(searchPanelShape, tint: .indigo.opacity(0.18))
+            .background(atlasInk.opacity(0.56), in: searchPanelShape)
+            .brainGlass(searchPanelShape)
             .clipShape(searchPanelShape)
             .overlay {
                 searchPanelShape.strokeBorder(QueryBox.focusBorder)
@@ -955,24 +960,38 @@ struct AtlasView: View {
     }
 
     private var starfield: some View {
-        let frame = RoundedRectangle(cornerRadius: 24)
-        return ZStack {
-            frame.fill(atlasInk)
-            AtlasOrbit(atlas: graph, selected: model.selected?.id,
-                       shape: AtlasBrainSurface.bundled == nil ? .sphere : shape,
-                       onlyConnections: onlyConnections && node != nil,
-                       focusRequest: focusRequest, acceptsScroll: visibleSearchState == nil) { item in
-                if let item {
-                    select(item.hit)
-                } else if model.selected != nil {
-                    model.closeAtlasDetail()
+        GeometryReader { geometry in
+            let panelFrame = CGRect(x: geometry.size.width - canvasInset - inspectorWidth,
+                                    y: inspectorTop, width: inspectorWidth,
+                                    height: max(0, geometry.size.height - inspectorTop - inspectorBottom))
+            ZStack(alignment: .topTrailing) {
+                AtlasOrbit(atlas: graph, selected: model.selected?.id,
+                           shape: AtlasBrainSurface.bundled == nil ? .sphere : shape,
+                           onlyConnections: onlyConnections && node != nil,
+                           focusRequest: focusRequest, acceptsScroll: visibleSearchState == nil,
+                           scrollExclusion: inspectorVisible ? panelFrame : nil) { item in
+                    dismissSearch()
+                    if let item {
+                        select(item.hit)
+                    } else if model.selected != nil {
+                        model.closeAtlasDetail()
+                    }
+                }
+                if graph?.nodes.isEmpty == true && !model.atlasBusy {
+                    ContentUnavailableView("Atlas är tomt", systemImage: "point.3.connected.trianglepath.dotted",
+                                           description: Text("Skapa eller importera en anteckning för att börja."))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                }
+                if inspectorVisible {
+                    inspector
+                        .frame(width: panelFrame.width, height: panelFrame.height)
+                        .padding(.top, inspectorTop)
+                        .padding(.trailing, canvasInset)
+                        .transition(reduceMotion ? .identity : .opacity.combined(with: .offset(x: 14)))
                 }
             }
-            if graph?.nodes.isEmpty == true && !model.atlasBusy {
-                ContentUnavailableView("Atlas är tomt", systemImage: "point.3.connected.trianglepath.dotted",
-                                       description: Text("Skapa eller importera en anteckning för att börja."))
-                    .allowsHitTesting(false)
-            }
+            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: inspectorVisible)
         }
         .overlay(alignment: .topLeading) {
             HStack(spacing: 11) {
@@ -982,7 +1001,7 @@ struct AtlasView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             .brainGlass(Capsule())
-            .padding(16)
+            .padding(canvasInset)
             .allowsHitTesting(false)
         }
         .overlay(alignment: .topTrailing) {
@@ -994,6 +1013,7 @@ struct AtlasView: View {
                     }
                 }
                 Button {
+                    dismissSearch()
                     inspectorVisible.toggle()
                     if haptics { BrainHaptics.selection() }
                 } label: {
@@ -1008,7 +1028,7 @@ struct AtlasView: View {
                 .padding(4)
                 .brainGlass(Capsule())
             }
-            .padding(16)
+            .padding(canvasInset)
         }
         .overlay(alignment: .bottomLeading) {
             Menu {
@@ -1025,13 +1045,11 @@ struct AtlasView: View {
             .fixedSize()
             .padding(4)
             .brainGlass(Capsule())
-            .padding(16)
+            .padding(canvasInset)
             .accessibilityLabel("Inställningar för Atlas")
             .help("Dra för att rotera. Nyp eller rulla för att zooma in bland noderna.")
         }
-        .clipShape(frame)
-        .overlay { frame.strokeBorder(.white.opacity(0.09)).allowsHitTesting(false) }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
     }
 
     private func legend(_ text: String, _ color: Color) -> some View {
@@ -1091,10 +1109,11 @@ struct AtlasView: View {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: model.selected?.id)
         }
         .padding(16)
-        .frame(width: 248)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(inset, in: frame)
-        .overlay { frame.strokeBorder(.white.opacity(0.09)).allowsHitTesting(false) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(atlasInk.opacity(0.34), in: frame)
+        .brainGlass(frame)
+        .shadow(color: .black.opacity(0.32), radius: 14, y: 7)
+        .accessibilityIdentifier("atlas-inspector")
     }
 
     private var overview: some View {
