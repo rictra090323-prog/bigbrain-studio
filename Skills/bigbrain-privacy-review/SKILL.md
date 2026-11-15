@@ -3,13 +3,13 @@ name: bigbrain-privacy-review
 description: Review BigBrain data flows for Word import, notes and derived memory, deletion, external model routing, and provider connections.
 ---
 
-# Granska integriteten i BigBrain
+# Review privacy in BigBrain
 
-Följ en anteckning från vald fil eller inmatning till lagring, index, modell, export och radering. Lista för varje steg syfte, uppgifter, plats, mottagare, åtkomst och lagringstid. Kartlägg cache, återställning, loggar och kopplingar separat.
+Trace one note from file selection or user input through storage, indexing, model inference, export and deletion. For each step record purpose, data, location, recipients, access and retention. Map caches, recovery, logs and derived associations separately.
 
-- Verifiera det lokala standardflödet offline med syntetiska uppgifter. Kontrollera att begränsningen gäller även vid omförsök, modellfel och importerade länkar.
-- Testa radering i original, index och härledda poster var för sig. Skilj funktionell radering från gallring av historik, säkerhetskopior och redan utlämnade uppgifter.
-- För extern AI, testa att användaren ser mottagare och urval före överföring, att privata poster blockeras och att återkallad åtkomst fungerar. Kontrollera att ett misslyckat anrop stannar hos vald leverantör.
-- Dokumentera vad som har testats, öppna risker och ansvar för nya flöden. Gör en separat GDPR-bedömning för faktisk behandling. Vid sannolik hög risk behöver konsekvensbedömningen göras före behandling.
+- Verify the default local workflow offline with synthetic data. Check retries, model failures and imported links.
+- Test deletion in the original file, index and derived records separately. Record how history, backups and previously transmitted data are retained or removed.
+- For an external model, check what the user sees about the recipient and excerpts before transfer. Test how private items and revoked access are handled. An unsuccessful request should stay with the selected provider.
+- Record what was tested, outstanding risks and ownership for new flows. Carry out a separate GDPR assessment for actual processing. A data protection impact assessment is required before processing likely to result in high risk.
 
-[IMY om inbyggt dataskydd](https://www.imy.se/verksamhet/dataskydd/det-har-galler-enligt-gdpr/inbyggt-dataskydd-och-dataskydd-som-standard/) · [GDPR, artiklarna 25 och 35](https://eur-lex.europa.eu/legal-content/EN-SV/TXT/?uri=CELEX%3A32016R0679)
+[Swedish Authority for Privacy Protection on data protection by design](https://www.imy.se/verksamhet/dataskydd/det-har-galler-enligt-gdpr/inbyggt-dataskydd-och-dataskydd-som-standard/) · [GDPR Articles 25 and 35](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32016R0679)

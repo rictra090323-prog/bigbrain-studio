@@ -64,3 +64,5 @@ python3 -B Tests/phone_capture_smoke.py "$bridge" Tests/Fixtures/Provanteckning.
 ```
 
 The Swift app lives in `Sources/`. The Python bridge handles the Markdown library, SQLite search, proposals and frozen citations. The iPhone pilot lives in `Mobile/`. Use a test branch for changes and open a pull request into `main`.
+
+[Feature overview](FEATURES.md) · [Roadmap](Docs/Roadmap.md) · [Architecture and credits](Docs/Architecture.md)
