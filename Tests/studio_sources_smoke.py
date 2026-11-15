@@ -54,6 +54,15 @@ with tempfile.TemporaryDirectory(prefix="bigbrain-citations-") as directory:
     match = re.fullmatch(r'\[Vägning åäö\]\(<([^>]+)> "BigBrain:([a-f0-9]+):([0-9]+):([0-9]+)"\)', link)
     assert match is not None
 
+    draft_doc = "Anteckningar/bigbrain-draft.md"
+    draft_link = run("source-cite", "--expected-file=" + str(vault / draft_doc), "--", draft_doc, *cite_args)["markdown"]
+    run("capture", "--draft-vault=/wrong/vault", "--", "Draft", "-", input=draft_link, fail=True)
+    new_note = run("capture", "--note", "--draft-vault=" + str(vault), "--", "Draft note", "-", input=draft_link)
+    assert draft_link in new_note["body"]
+    inbox = run("capture", "--draft-vault=" + str(vault), "--", "Draft source", "-", input=draft_link)
+    assert draft_link.replace("../K", "../../K") in inbox["body"]
+    assert not (vault / draft_doc).exists()
+
     source.write_text("# Vägning åäö\n\nEtt ändrat källstycke.\n")
     command("source-cite", *cite_args, fail=True)
     archive = command("source-version", *match.groups())

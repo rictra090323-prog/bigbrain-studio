@@ -5,9 +5,9 @@ import UniformTypeIdentifiers
 typealias LocalState<Value> = SwiftUI.State<Value>
 
 private let base = Color(red: 0.035, green: 0.047, blue: 0.102)
-private let panel = Color(red: 0.101, green: 0.127, blue: 0.213)
-let inset = Color(red: 0.059, green: 0.082, blue: 0.153)
-private let line = Color.white.opacity(0.085)
+private let panel = Color(red: 0.112, green: 0.124, blue: 0.152)
+let inset = Color(red: 0.083, green: 0.094, blue: 0.118)
+private let line = Color.white.opacity(0.07)
 private let muted = Color(red: 0.67, green: 0.70, blue: 0.77)
 private let ice = Color(red: 0.74, green: 0.77, blue: 1)
 private let lime = Color(red: 0.57, green: 0.96, blue: 1)
@@ -32,6 +32,33 @@ enum Section: String, CaseIterable, Identifiable {
 struct Hit: Codable, Identifiable, Hashable, Sendable {
     let id: String, path: String, file: String, title: String, kind: String, excerpt: String, match: String
     var preview: String? = nil
+    var modifiedAt: Double? = nil
+    var isSource: Bool { kind == "inbox" || kind == "reference" || path.contains("/references/") }
+}
+
+struct EntryTypeLabel: View {
+    let hit: Hit
+    let appearance: NoteAppearance
+    let tint: Color
+
+    var body: some View {
+        Label(title, systemImage: icon)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+    }
+
+    private var title: String {
+        if hit.kind == "skill" { return "Skill" }
+        if hit.isSource { return "Källa" }
+        return appearance.symbol == .document ? "Anteckning" : appearance.symbol.rawValue
+    }
+
+    private var icon: String {
+        if hit.kind == "skill" { return "square.stack.3d.up" }
+        if hit.isSource { return "link" }
+        return appearance.symbol.icon
+    }
 }
 
 struct NoteAppearance: Codable, Equatable {
@@ -120,6 +147,7 @@ struct ContextPack: Decodable { let text: String }
 struct ExtractedSource: Decodable { let body: String }
 struct CodexStatus: Decodable { let ready: Bool, message: String }
 struct Confirmation: Decodable {}
+struct SkillReviewStatus: Decodable { let ready: Bool }
 struct ImportedLibrary: Decodable { let library: String, imported: Int }
 struct ImportedNote: Decodable { let note: Note, title: String, created: Bool }
 
@@ -248,6 +276,7 @@ final class BrainModel: ObservableObject {
     private var started = false
     private var timer: Timer?
     private var ticking = false
+    private var lastSkillReview = Date.distantPast
 
     func start() {
         guard !started else { return }
@@ -604,9 +633,11 @@ final class BrainModel: ObservableObject {
         }
     }
 
-    func capture(title: String, body: String, source: String, inbox: Bool, appearance: NoteAppearance? = nil) async -> Bool {
+    func capture(title: String, body: String, source: String, inbox: Bool, appearance: NoteAppearance? = nil,
+                 draftVault: String? = nil) async -> Bool {
         do {
-            let args = ["capture", "--source=\(source)"] + (inbox ? [] : ["--note"]) + ["--", title, "-"]
+            let args = ["capture", "--source=\(source)"] + (inbox ? [] : ["--note"])
+                + (draftVault.map { ["--draft-vault=" + $0] } ?? []) + ["--", title, "-"]
             let created: Note = try await Bridge.invoke(args, input: Data(body.utf8))
             await refresh()
             show(inbox ? .inbox : .search)
@@ -635,7 +666,7 @@ final class BrainModel: ObservableObject {
     }
 
     func openSearchCommand() {
-        if editorHit == nil {
+        if editorHit == nil && !showingCapture {
             show(.search)
             librarySearchRequest += 1
         } else {
@@ -663,18 +694,27 @@ final class BrainModel: ObservableObject {
         defer { running = false }
         let library = libraryGeneration
         do {
-            let fields = ["mode": mode, "query": query, "path": path, "language": language,
-                          "before": before, "after": after, "genre": genre]
+            let fields: [String: Any] = ["mode": mode, "query": query, "path": path, "language": language,
+                                         "before": before, "after": after, "genre": genre,
+                                         "learnSkills": UserDefaults.standard.bool(forKey: "automaticSkillLearning")]
             let input = Bridge.object(fields)
-            let result: AgentReply = Distribution.store
-                ? try await DeviceModel.run(input)
-                : try await Bridge.invoke(["agent"], input: input)
+            let result: AgentReply
+            if CustomModel.enabled {
+                result = try await CustomModel.configured().run(input)
+            } else if Distribution.store {
+                result = try await DeviceModel.run(input)
+            } else {
+                result = try await Bridge.invoke(["agent"], input: input)
+            }
             guard library == libraryGeneration else { return nil }
-            if mode != "learn" && mode != "write" && mode != "polish" { reply = result }
-            if result.proposal != nil { await refresh(); notify("Nytt ändringsförslag") }
+            if !["learn", "write", "polish", "skill-review"].contains(mode) { reply = result }
+            if result.proposal != nil {
+                await refresh()
+                notify(mode == "skill-review" ? "New skill ready for review" : "Nytt ändringsförslag")
+            }
             return result
         } catch {
-            if library == libraryGeneration { self.error = error.localizedDescription }
+            if library == libraryGeneration && mode != "skill-review" { self.error = error.localizedDescription }
             return nil
         }
     }
@@ -684,8 +724,19 @@ final class BrainModel: ObservableObject {
         ticking = true
         defer { ticking = false }
         do {
-            let result: AgentReply = try await Bridge.invoke(["auto"])
-            if result.status == "complete" || result.status == "error" { await refresh() }
+            if UserDefaults.standard.bool(forKey: "automaticSkillLearning"),
+               Date.now.timeIntervalSince(lastSkillReview) >= 1_800,
+               dashboard?.config.vaultReady == true {
+                let status: SkillReviewStatus = try await Bridge.invoke(["skill-review-ready"])
+                if status.ready && !running && UserDefaults.standard.bool(forKey: "automaticSkillLearning") {
+                    lastSkillReview = .now
+                    _ = await run("skill-review")
+                }
+            }
+            if !Distribution.store && !CustomModel.enabled {
+                let result: AgentReply = try await Bridge.invoke(["auto"])
+                if result.status == "complete" || result.status == "error" { await refresh() }
+            }
         } catch { self.error = error.localizedDescription }
     }
 
@@ -874,8 +925,8 @@ struct WorkspaceTitle: View {
     init(_ title: String) { self.title = title }
 
     var body: some View {
-        Text(title).font(.system(size: 48, weight: .medium))
-            .tracking(-3.4).accessibilityAddTraits(.isHeader)
+        Text(title).font(.system(size: 36, weight: .medium))
+            .tracking(-1.8).accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -950,7 +1001,7 @@ struct Panel<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
         content.padding(17).frame(maxWidth: .infinity, alignment: .leading)
-            .background(panel, in: RoundedRectangle(cornerRadius: 12))
+            .background(panel.opacity(0.90), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(line))
     }
 }
@@ -984,14 +1035,14 @@ struct EmptyPanel: View {
             Text(detail).font(.system(size: 12)).foregroundStyle(muted).multilineTextAlignment(.center)
         }
         .padding(23).frame(maxWidth: .infinity, minHeight: 115)
-        .background(inset, in: RoundedRectangle(cornerRadius: 10))
+        .background(panel.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(line))
     }
 }
 
 struct Sidebar: View {
     @ObservedObject var model: BrainModel
-    private let studioSections: [Section] = [.atlas, .search, .inbox, .review, .settings]
+    private let studioSections: [Section] = [.atlas, .search, .inbox, .review, .writing, .settings]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -1028,7 +1079,7 @@ struct Sidebar: View {
                 }
                 if Distribution.store {
                     Menu("Verktyg") {
-                        ForEach([Section.radar, .writing, .skills]) { section in
+                        ForEach([Section.radar, .skills]) { section in
                             Button(section.rawValue) { model.show(section) }
                         }
                     }
@@ -1058,8 +1109,9 @@ struct Sidebar: View {
         }
         .padding(.horizontal, 11).padding(.top, 18).padding(.bottom, 17)
         .frame(width: 157)
-        .brainGlass(RoundedRectangle(cornerRadius: 24))
+        .brainGlass(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .padding(.leading, 12).padding(.top, 36).padding(.bottom, 12)
+        .padding(.trailing, model.section == .atlas ? 10 : 0)
     }
 }
 
@@ -1101,8 +1153,8 @@ struct RadarView: View {
             VStack(alignment: .leading, spacing: 19) {
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 17).fill(LinearGradient(colors: [
-                        Color(red: 0.11, green: 0.12, blue: 0.20),
-                        Color(red: 0.20, green: 0.21, blue: 0.34),
+                        panel.opacity(0.88),
+                        Color(red: 0.157, green: 0.172, blue: 0.211).opacity(0.92),
                     ], startPoint: .topLeading, endPoint: .bottomTrailing))
                     RadarGraphic().frame(width: 365).frame(maxWidth: .infinity, alignment: .trailing)
                         .clipped()
@@ -1122,7 +1174,7 @@ struct RadarView: View {
                 }
                 .frame(minHeight: 223)
                 .clipShape(RoundedRectangle(cornerRadius: 17))
-                .overlay(RoundedRectangle(cornerRadius: 17).stroke(ice.opacity(0.17)))
+                .overlay(RoundedRectangle(cornerRadius: 17).stroke(line))
                 HStack(spacing: 11) {
                     StatCard(title: "Anteckningar", number: model.dashboard?.notes ?? 0, icon: "doc.text")
                     StatCard(title: "Skills", number: model.dashboard?.skills ?? 0, icon: "square.stack.3d.up")
@@ -1236,6 +1288,7 @@ struct QueryBox: View {
     var prominent = false
     var focus: FocusState<Bool>.Binding?
     var attachedResults = false
+    var backgroundColor: Color? = nil
     var action: () -> Void
     private var searchFocus: FocusState<Bool>.Binding { focus ?? $fieldFocused }
 
@@ -1254,9 +1307,11 @@ struct QueryBox: View {
         .font(prominent ? Self.prominentFont : .body)
         .padding(.horizontal, prominent ? 17 : 12)
         .padding(.vertical, prominent ? 15 : 10)
-        .background(inset.opacity(prominent ? 0.55 : 1), in: outline)
+        .background(backgroundColor ?? inset.opacity(prominent ? 0.55 : 1), in: outline)
         .background {
-            if prominent { outline.fill(.clear).brainGlass(outline, tint: .indigo.opacity(0.16)) }
+            if prominent {
+                outline.fill(.clear).brainGlass(outline, tint: backgroundColor == nil ? .indigo.opacity(0.16) : nil)
+            }
         }
         .overlay {
             outline.strokeBorder(attachedResults || searchFocus.wrappedValue ? Self.focusBorder : .white.opacity(0.18))
@@ -1304,6 +1359,12 @@ struct LibraryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var searchFocused: Bool
     @LocalState private var showPinned = false
+    @AppStorage("libraryListWidth") private var libraryListWidth = 303.0
+    @GestureState private var listDrag: CGFloat = 0
+
+    private let minimumListWidth: CGFloat = 255
+    private let minimumDetailWidth: CGFloat = 374
+    private let dividerWidth: CGFloat = 14
 
     private var isLibrary: Bool { model.section == .search }
     private var browsing: Bool { model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1316,40 +1377,14 @@ struct LibraryView: View {
         Group {
             if isLibrary {
                 VStack(alignment: .leading, spacing: 11) {
-                    HStack(alignment: .firstTextBaseline) {
+                    HStack(spacing: 12) {
                         WorkspaceTitle("Bibliotek")
                         Spacer()
-                        if !Distribution.store { agentTools }
+                        WorkspaceActions(model: model)
                     }
-                    HSplitView {
-                        VStack(spacing: 10) {
-                            searchField(prominent: true)
-                            if browsing || model.searching {
-                                HStack {
-                                    if browsing {
-                                        ActionButton(title: showPinned ? "Fästa" : "Alla anteckningar",
-                                                     icon: showPinned ? "pin.fill" : "pin", primary: showPinned) {
-                                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { showPinned.toggle() }
-                                            BrainHaptics.selection()
-                                        }
-                                        .help(showPinned ? "Visa alla anteckningar" : "Visa bara fästa anteckningar")
-                                        .accessibilityIdentifier("library-pinned-filter")
-                                    }
-                                    Spacer()
-                                    if model.searching { ProgressView().controlSize(.small) }
-                                }
-                            }
-                            results
-                        }
-                        .padding(.trailing, 14)
-                        .frame(minWidth: 255, idealWidth: 303)
-                        detail
-                            .padding(.leading, 14)
-                            .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
-                            .layoutPriority(1)
-                    }
+                    librarySplit
                 }
-                .padding(.top, 14)
+                .padding(.top, 6)
             } else {
                 VStack(alignment: .leading, spacing: 13) {
                     if model.section == .inbox {
@@ -1382,6 +1417,67 @@ struct LibraryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 21)
         .padding(.bottom, 19)
+    }
+
+    private var librarySplit: some View {
+        GeometryReader { geometry in
+            let maximum = max(minimumListWidth, geometry.size.width - minimumDetailWidth - dividerWidth)
+            let savedWidth = min(maximum, max(minimumListWidth, libraryListWidth))
+            let width = min(maximum, max(minimumListWidth, savedWidth + listDrag))
+            HStack(spacing: 0) {
+                VStack(spacing: 10) {
+                    searchField(prominent: true)
+                    if browsing || model.searching {
+                        HStack {
+                            if browsing {
+                                ActionButton(title: showPinned ? "Fästa" : "Alla anteckningar",
+                                             icon: showPinned ? "pin.fill" : "pin", primary: showPinned) {
+                                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { showPinned.toggle() }
+                                    BrainHaptics.selection()
+                                }
+                                .help(showPinned ? "Visa alla anteckningar" : "Visa bara fästa anteckningar")
+                                .accessibilityIdentifier("library-pinned-filter")
+                            }
+                            Spacer()
+                            if model.searching { ProgressView().controlSize(.small) }
+                        }
+                    }
+                    results
+                }
+                .padding(.trailing, 6)
+                .frame(width: width)
+
+                Divider()
+                    .frame(width: dividerWidth)
+                    .contentShape(Rectangle())
+                    .onHover { hovering in
+                        if hovering { NSCursor.resizeLeftRight.set() }
+                        else { NSCursor.arrow.set() }
+                    }
+                    .gesture(DragGesture(coordinateSpace: .global)
+                        .updating($listDrag) { value, offset, _ in offset = value.translation.width }
+                        .onEnded { value in
+                            libraryListWidth = min(maximum, max(minimumListWidth, savedWidth + value.translation.width))
+                        })
+                    .accessibilityLabel("Bredd på anteckningslistan")
+                    .accessibilityIdentifier("library-list-divider")
+                    .accessibilityValue("\(Int(width)) punkter")
+                    .accessibilityAdjustableAction { direction in
+                        switch direction {
+                        case .increment: libraryListWidth = min(maximum, savedWidth + 16)
+                        case .decrement: libraryListWidth = max(minimumListWidth, savedWidth - 16)
+                        @unknown default: break
+                        }
+                    }
+
+                VStack(alignment: .trailing, spacing: 6) {
+                    if !Distribution.store && !browsing { agentTools }
+                    detail
+                }
+                .padding(.leading, 6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
     }
 
     private func searchField(prominent: Bool) -> some View {
@@ -1525,24 +1621,30 @@ private struct LibraryRow: View {
     @LocalState private var hovering = false
 
     var body: some View {
-        let tint = appearance.accent.tint
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: appearance.symbol == .document && hit.kind == "skill" ? "square.stack.3d.up" : appearance.symbol.icon)
-                .font(.system(size: 15, weight: .medium)).foregroundStyle(tint)
-                .frame(width: 29, height: 29)
-                .background(tint.opacity(selected ? 0.19 : 0.11), in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
+        let tint = hit.kind == "skill" ? NoteAppearance.Accent.lavender.tint :
+            hit.isSource ? NoteAppearance.Accent.mint.tint : appearance.accent.tint
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
                 Text(hit.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                let preview = (hit.preview ?? hit.excerpt).replacingOccurrences(of: "\n", with: " ")
-                if !preview.isEmpty {
-                    Text(preview).font(.system(size: 12)).foregroundStyle(muted).lineLimit(2)
+                if pinned {
+                    Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(tint)
+                        .accessibilityLabel("Fäst anteckning")
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if pinned {
-                Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(tint)
-                    .accessibilityLabel("Fäst anteckning")
+            let preview = (hit.preview ?? hit.excerpt).replacingOccurrences(of: "\n", with: " ")
+            if !preview.isEmpty {
+                Text(preview).font(.system(size: 12)).foregroundStyle(muted).lineLimit(2)
+            }
+            HStack {
+                EntryTypeLabel(hit: hit, appearance: appearance, tint: tint)
+                Spacer(minLength: 6)
+                if let modifiedAt = hit.modifiedAt {
+                    Text(Date(timeIntervalSince1970: modifiedAt), format: .dateTime.day().month(.abbreviated).year())
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(muted)
+                        .lineLimit(1)
+                        .help("Senast ändrad")
+                }
             }
         }
         .padding(.horizontal, 9).padding(.vertical, 9)
@@ -1598,7 +1700,7 @@ struct NoteView: View {
                     }
                     .disabled(currentNote == nil)
                     if editable {
-                        ActionButton(title: "Redigera", icon: "square.and.pencil", primary: true) {
+                        ActionButton(title: "Redigera anteckning", icon: "square.and.pencil", primary: true) {
                             BrainHaptics.action()
                             model.openEditor(for: hit)
                         }
@@ -2063,11 +2165,12 @@ struct SettingsView: View {
                             ActionButton(title: "Spara inställningar", icon: "checkmark", primary: true) { model.saveSettings() }
                         }
                         Text(Distribution.store
-                             ? "Anteckningar, index och skrivprofiler lagras i appens lokala bibliotek. Agentsvar körs med Apple Intelligence på enheten."
-                             : "Index och skrivprofiler lagras lokalt. När du använder Codex får det frågan och de utdrag som valts för jobbet.")
+                             ? "The library and writing profiles are stored locally. Studio uses Apple Intelligence by default."
+                             : "The library and writing profiles are stored locally. The default Codex workflow receives the request and selected excerpts.")
                             .font(.system(size: 12)).foregroundStyle(muted)
                     }
                 }
+                ModelProviderSettings()
                 if !Distribution.store {
                     Panel {
                         VStack(alignment: .leading, spacing: 10) {
@@ -2102,6 +2205,88 @@ struct SettingsView: View {
                 }
             }.padding(21)
         }
+    }
+}
+
+private struct ModelProviderSettings: View {
+    @AppStorage("automaticSkillLearning") private var learnSkills = false
+    @AppStorage("customModelEnabled") private var enabled = false
+    @AppStorage("customModelEndpoint") private var savedEndpoint = ""
+    @AppStorage("customModelID") private var savedID = ""
+    @LocalState private var endpoint = ""
+    @LocalState private var modelID = ""
+    @LocalState private var key = ""
+    @LocalState private var status = ""
+    @LocalState private var testing = false
+
+    var body: some View {
+        Panel {
+            VStack(alignment: .leading, spacing: 9) {
+                SmallLabel(text: "Model provider", tint: lime)
+                Toggle("Use a custom model", isOn: $enabled)
+                    .disabled(savedEndpoint.isEmpty || savedID.isEmpty)
+                Text("BigBrain sends your request and relevant library excerpts to the endpoint you select.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Hugging Face") {
+                        endpoint = "https://router.huggingface.co/v1"
+                        modelID = ""
+                        key = ""
+                    }
+                    Button("OpenClaw") {
+                        endpoint = "http://127.0.0.1:18789/v1"
+                        modelID = "openclaw/default"
+                        key = ""
+                    }
+                }
+                TextField("Base URL, for example https://router.huggingface.co/v1", text: $endpoint)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Model ID", text: $modelID).textFieldStyle(.roundedBorder)
+                SecureField("API key (optional, stored in Keychain)", text: $key).textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("Save provider") {
+                        do {
+                            let model = try CustomModel(endpoint: endpoint, id: modelID)
+                            if !key.isEmpty { try model.setKey(key.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                            savedEndpoint = model.url.absoluteString
+                            savedID = model.id
+                            key = ""
+                            enabled = true
+                            status = "Custom model enabled."
+                        } catch { status = error.localizedDescription }
+                    }
+                    Button("Remove saved key") {
+                        do {
+                            try CustomModel.configured().setKey("")
+                            status = "Saved key removed."
+                        } catch { status = error.localizedDescription }
+                    }
+                    .disabled(savedEndpoint.isEmpty)
+                    Button(testing ? "Testing…" : "Test saved provider") {
+                        testing = true
+                        Task {
+                            defer { testing = false }
+                            do {
+                                _ = try await CustomModel.configured().complete(
+                                    instructions: "Reply with OK.", content: "Connection test.")
+                                status = "Model replied successfully."
+                            } catch { status = error.localizedDescription }
+                        }
+                    }
+                    .disabled(testing || savedEndpoint.isEmpty)
+                }
+                if !status.isEmpty { Text(status).font(.caption).textSelection(.enabled) }
+                if enabled && !Distribution.store {
+                    Text("Automatic source radar pauses while a custom model is active.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Divider()
+                Toggle("Learn skills from recent workflows", isOn: $learnSkills)
+                Text("While BigBrain is open, the selected model can review summaries of completed research tasks and propose a reusable skill. Approve it in the review queue to add it to this library.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { endpoint = savedEndpoint; modelID = savedID }
     }
 }
 
@@ -2175,131 +2360,18 @@ struct TranscriptionView: View {
     }
 }
 
-struct CaptureView: View {
-    @ObservedObject var model: BrainModel
-    @Environment(\.dismiss) var dismiss
-    @LocalState private var title = ""
-    @LocalState private var source = ""
-    @LocalState private var text = ""
-    @LocalState private var saving = false
-    @LocalState private var extracting = false
-    @LocalState private var inbox = !Distribution.store
-    @LocalState private var optionsExpanded = false
-    @LocalState private var template: NoteTemplate?
-
-    private var captureTitle: String {
-        let explicitTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !explicitTitle.isEmpty { return explicitTitle }
-        let firstLine = text.split(whereSeparator: \.isNewline)
-            .lazy.map { $0.trimmingCharacters(in: .whitespaces) }
-            .first { !$0.isEmpty }
-        return firstLine.map { String($0.prefix(72)) } ?? "Ny anteckning"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack {
-                Text("Fånga snabbt").font(.system(size: 25, weight: .semibold))
-                Spacer()
-                Menu("Mallar") {
-                    ForEach(NoteTemplate.allCases, id: \.self) { template in
-                        Button(template.rawValue, systemImage: template.appearance.symbol.icon) {
-                            apply(template)
-                        }
-                    }
-                }
-                .fixedSize().disabled(saving)
-            }
-            EditorField(title: "Anteckning", text: $text, height: 175, autofocus: true)
-                .disabled(saving)
-            DisclosureGroup("Rubrik, källa och plats", isExpanded: $optionsExpanded) {
-                VStack(alignment: .leading, spacing: 8) {
-                    TextField("Rubrik, valfri", text: $title).textFieldStyle(.roundedBorder)
-                    HStack {
-                        TextField("Källänk, valfri", text: $source).textFieldStyle(.roundedBorder)
-                        if !Distribution.store {
-                            ActionButton(title: extracting ? "Hämtar…" : "Hämta artikel", icon: "arrow.down.doc") {
-                                extracting = true
-                                Task {
-                                    defer { extracting = false }
-                                    if let result = await model.extract(source) {
-                                        text = text.isEmpty ? result : text + "\n\n" + result
-                                    }
-                                }
-                            }.disabled(extracting || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-                    Picker("Spara som", selection: $inbox) {
-                        Text("Anteckning").tag(false)
-                        Text("Källa i inkorgen").tag(true)
-                    }.pickerStyle(.segmented)
-                }
-                .padding(.top, 6)
-            }.disabled(saving)
-            HStack {
-                Text(inbox ? "Sparas i inkorgen" : "Sparas i biblioteket och visas i Atlas")
-                    .font(.system(size: 12)).foregroundStyle(muted)
-                Spacer()
-                ActionButton(title: "Avbryt") { dismiss() }.keyboardShortcut(.cancelAction).disabled(saving)
-                ActionButton(title: saving ? "Sparar…" : "Spara", icon: "checkmark", primary: true) {
-                    saving = true
-                    Task {
-                        defer { saving = false }
-                        if await model.capture(title: captureTitle, body: text, source: source, inbox: inbox,
-                                               appearance: template?.appearance) { dismiss() }
-                    }
-                }
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(saving || extracting || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                                                   source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-            }
-        }
-        .padding(24).frame(width: 510).background(base)
-        .interactiveDismissDisabled(saving)
-    }
-
-    private func apply(_ template: NoteTemplate) {
-        self.template = template
-        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { title = template.rawValue }
-        let existing = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        text = existing.isEmpty ? template.body : existing + "\n\n" + template.body
-        inbox = false
-        optionsExpanded = true
-        BrainHaptics.selection()
-    }
-}
-
-private enum NoteTemplate: String, CaseIterable {
-    case meeting = "Mötesanteckning", study = "Studieanteckning", tasks = "Uppgiftslista"
-
-    var body: String {
-        switch self {
-        case .meeting: "## Agenda\n\n## Beslut\n\n## Nästa steg\n\n- [ ] Lägg till ansvarig och datum"
-        case .study: "## Fråga\n\n## Viktiga begrepp\n\n## Förklaring med egna ord\n\n## Repetition"
-        case .tasks: "## Att göra\n\n- [ ] Lägg till första uppgiften\n\n## Uppföljning"
-        }
-    }
-
-    var appearance: NoteAppearance {
-        switch self {
-        case .meeting: NoteAppearance(accent: .lavender, symbol: .meeting)
-        case .study: NoteAppearance(accent: .ocean, symbol: .study)
-        case .tasks: NoteAppearance(accent: .mint, symbol: .tasks)
-        }
-    }
-}
-
 struct RootView: View {
     @ObservedObject var model: BrainModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @LocalState private var atlasCamera = OrbitCamera()
 
     private var workspace: some View {
         HStack(spacing: 0) {
             Sidebar(model: model)
             VStack(spacing: 0) {
-                if model.section != .atlas { Header(model: model) }
+                if model.section != .atlas && model.section != .search { Header(model: model) }
                 switch model.section {
-                case .atlas: AtlasView(model: model)
+                case .atlas: AtlasView(model: model, camera: $atlasCamera)
                 case .radar: RadarView(model: model)
                 case .search, .skills, .inbox: LibraryView(model: model)
                 case .review: ReviewView(model: model)
@@ -2308,11 +2380,31 @@ struct RootView: View {
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .background {
+            if model.section == .atlas {
+                ZStack {
+                    atlasInk
+                    RadialGradient(colors: [Color.indigo.opacity(0.27), .clear], center: .topLeading,
+                                   startRadius: 0, endRadius: 660)
+                }
+                .ignoresSafeArea()
+            } else {
+                FrostedAtlasBackdrop(atlas: model.atlas, camera: atlasCamera)
+                    .ignoresSafeArea()
+                    .task(id: model.dashboard?.config.vault) {
+                        if model.atlas == nil && !model.atlasBusy { await model.loadAtlas() }
+                    }
+            }
+        }
     }
 
     var body: some View {
         NavigationStack {
-            workspace
+            if model.showingCapture {
+                StudioNoteView(model: model)
+                    .navigationBarBackButtonHidden()
+            } else {
+                workspace
                 .navigationDestination(item: Binding(get: { model.editorHit }, set: {
                     if $0 == nil { model.closeEditor() }
                 })) { hit in
@@ -2322,16 +2414,11 @@ struct RootView: View {
                             .navigationBarBackButtonHidden()
                     }
                 }
+            }
         }
         .frame(minWidth: 975, minHeight: 655)
         .foregroundStyle(.white)
-        .background {
-            ZStack {
-                base
-                RadialGradient(colors: [Color.indigo.opacity(0.38), .clear], center: .topLeading, startRadius: 0, endRadius: 615)
-                RadialGradient(colors: [Color.blue.opacity(0.29), .clear], center: .bottomTrailing, startRadius: 0, endRadius: 520)
-            }.ignoresSafeArea()
-        }
+        .background(workspaceInk.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .environment(\.openURL, OpenURLAction { url in
             guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return .discarded }
@@ -2347,7 +2434,6 @@ struct RootView: View {
             }
         }
         .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: model.toast)
-        .sheet(isPresented: $model.showingCapture) { CaptureView(model: model) }
         .sheet(isPresented: $model.showingTranscription) {
             if #available(macOS 26.0, *) { TranscriptionView(model: model) }
         }
@@ -2367,13 +2453,13 @@ struct BigBrainApp: App {
             .windowStyle(.hiddenTitleBar)
             .commands {
                 CommandGroup(replacing: .newItem) {
-                    Button("Fånga snabbt") { model.showingCapture = true }.keyboardShortcut("n", modifiers: .command)
-                        .disabled(model.editorHit != nil)
-                    Button(model.editorHit == nil ? "Sök i biblioteket" : "Sök källor och kommandon",
+                    Button("Fånga") { model.showingCapture = true }.keyboardShortcut("n", modifiers: .command)
+                        .disabled(model.editorHit != nil || model.showingCapture)
+                    Button(model.editorHit == nil && !model.showingCapture ? "Sök i biblioteket" : "Sök källor och kommandon",
                            action: model.openSearchCommand).keyboardShortcut("k", modifiers: .command)
                 }
                 CommandGroup(after: .importExport) {
-                    Button("Importera från iPhone…") { model.choosePhoneCapture() }.disabled(model.importing || model.editorHit != nil)
+                    Button("Importera från iPhone…") { model.choosePhoneCapture() }.disabled(model.importing || model.editorHit != nil || model.showingCapture)
                 }
             }
     }

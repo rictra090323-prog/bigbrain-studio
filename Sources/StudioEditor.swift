@@ -13,6 +13,7 @@ struct StudioTextEditor: NSViewRepresentable {
     let control: StudioEditorControl
     let onChange: (String) -> Void
     let openCitation: (StudioCitation) -> Void
+    var autofocus = false
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: StudioTextEditor
@@ -65,6 +66,12 @@ struct StudioTextEditor: NSViewRepresentable {
         editor.delegate = context.coordinator
         scroll.documentView = editor
         control.view = editor
+        if autofocus {
+            DispatchQueue.main.async { [weak editor] in
+                guard let editor else { return }
+                editor.window?.makeFirstResponder(editor)
+            }
+        }
         return scroll
     }
 
@@ -109,17 +116,37 @@ private struct StudioSuggestion: Decodable, Sendable {
     let terms: [String]
 }
 
+private enum NoteTemplate: String, CaseIterable {
+    case meeting = "Mötesanteckning", study = "Studieanteckning", tasks = "Uppgiftslista"
+
+    var body: String {
+        switch self {
+        case .meeting: "## Agenda\n\n## Beslut\n\n## Nästa steg\n\n- [ ] Lägg till ansvarig och datum"
+        case .study: "## Fråga\n\n## Viktiga begrepp\n\n## Förklaring med egna ord\n\n## Repetition"
+        case .tasks: "## Att göra\n\n- [ ] Lägg till första uppgiften\n\n## Uppföljning"
+        }
+    }
+
+    var appearance: NoteAppearance {
+        switch self {
+        case .meeting: NoteAppearance(accent: .lavender, symbol: .meeting)
+        case .study: NoteAppearance(accent: .ocean, symbol: .study)
+        case .tasks: NoteAppearance(accent: .mint, symbol: .tasks)
+        }
+    }
+}
+
 struct StudioNoteView: View {
     private enum ToolTab: String, CaseIterable {
         case start = "Start", export = "Exportera", view = "Visa"
     }
 
     @ObservedObject var model: BrainModel
-    let hit: Hit
-    let note: Note
+    let hit: Hit?
+    let note: Note?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var editor = StudioEditorControl()
-    @LocalState private var baseline: Note
+    @LocalState private var baseline: Note?
     @LocalState private var draft: String
     @LocalState private var draftRevision: String
     @LocalState private var raw = false
@@ -139,18 +166,55 @@ struct StudioNoteView: View {
     @LocalState private var researchFocusRequest = 0
     @LocalState private var insertion: StudioInsertion?
 
-    init(model: BrainModel, hit: Hit, note: Note, citation: StudioCitation? = nil) {
+    @LocalState private var captureVault: String?
+    @LocalState private var title = ""
+    @LocalState private var source = ""
+    @LocalState private var inbox = !Distribution.store
+    @LocalState private var template: NoteTemplate?
+    @LocalState private var extracting = false
+    @LocalState private var discardCapture = false
+
+    init(model: BrainModel, hit: Hit? = nil, note: Note? = nil, citation: StudioCitation? = nil) {
         self.model = model
         self.hit = hit
         self.note = note
         _baseline = State(initialValue: note)
-        _draft = State(initialValue: note.body)
-        _draftRevision = State(initialValue: note.revision)
+        _draft = State(initialValue: note?.body ?? "")
+        _draftRevision = State(initialValue: note?.revision ?? "")
+        _captureVault = State(initialValue: model.dashboard?.config.vault)
         _research = State(initialValue: citation.map(StudioResearchMode.citation))
     }
 
-    private var dirty: Bool { draft != baseline.body }
-    private var conflicting: Bool { draftRevision != baseline.revision || note.revision != baseline.revision }
+    private var capturing: Bool { note == nil }
+    private var dirty: Bool { draft != (baseline?.body ?? "") }
+    private var conflicting: Bool {
+        guard let baseline else { return false }
+        return draftRevision != baseline.revision || note?.revision != baseline.revision
+    }
+
+    private var canSave: Bool {
+        if capturing {
+            return !busy && !extracting && (!trimmed(draft).isEmpty || !trimmed(source).isEmpty)
+        }
+        return dirty && !busy && !conflicting
+    }
+
+    private var documentTitle: String {
+        if let hit { return hit.title }
+        if !trimmed(title).isEmpty { return trimmed(title) }
+        let firstLine = StudioMarkdown.read(draft).string.split(whereSeparator: \.isNewline).first
+        return firstLine.map { String(trimmed(String($0)).prefix(72)) } ?? "Ny anteckning"
+    }
+
+    private var sourceDocument: Note? {
+        if let note { return note }
+        guard let captureVault else { return nil }
+        let path = "Anteckningar/bigbrain-draft.md"
+        let file = URL(fileURLWithPath: captureVault, isDirectory: true).appendingPathComponent(path).path
+        return Note(path: path, file: file, body: "", revision: "")
+    }
+
+    private func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         let visibleText = raw ? draft : editor.view.flatMap { $0.markdownMode ? nil : $0.string }
@@ -160,15 +224,15 @@ struct StudioNoteView: View {
             HStack(spacing: 18) {
                 if showOutline && !raw && research == nil { outline }
                 StudioTextEditor(markdown: draft, raw: raw, busy: busy, control: editor, onChange: updateDraft,
-                                 openCitation: { research = .citation($0) })
+                                 openCitation: { research = .citation($0) }, autofocus: capturing)
                     .id(raw)
                     .padding(.horizontal, 19)
                     .padding(.vertical, 14)
                     .frame(maxWidth: 840, maxHeight: .infinity)
                     .background(Color(red: 0.08, green: 0.105, blue: 0.16), in: RoundedRectangle(cornerRadius: 14))
                     .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.12)).allowsHitTesting(false) }
-                if let research {
-                    StudioResearchPanel(document: note, mode: research, query: $researchQuery, revision: baseline.revision,
+                if let research, let sourceDocument {
+                    StudioResearchPanel(document: sourceDocument, mode: research, query: $researchQuery, revision: baseline?.revision,
                                         focusRequest: researchFocusRequest,
                                         setMode: { mode in
                                             if let mode { self.research = mode } else { closeResearch() }
@@ -182,7 +246,8 @@ struct StudioNoteView: View {
             if !lookupStatus.isEmpty { Text(lookupStatus).font(.caption).foregroundStyle(.secondary) }
             if !failure.isEmpty { Text(failure).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
             HStack {
-                Text(busy ? "Sparar…" : conflicting ? "Sparad version har ändrats" : dirty ? "Osparade ändringar" : "Sparat lokalt")
+                Text(busy ? "Sparar…" : capturing ? (inbox ? "Sparas i inkorgen" : "Sparas i biblioteket") :
+                    conflicting ? "Sparad version har ändrats" : dirty ? "Osparade ändringar" : "Sparat lokalt")
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityIdentifier("studio-save-status")
                 Spacer()
@@ -191,7 +256,7 @@ struct StudioNoteView: View {
                 if conflicting {
                     Button("Kopiera utkast") { model.copy(draft) }
                     Button("Hämta sparad") { replaceDraft = true }
-                } else {
+                } else if let note {
                     Button("Visa fil") { model.reveal(note.path) }.buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }
@@ -201,7 +266,19 @@ struct StudioNoteView: View {
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear(perform: restoreDraft)
+        .onChange(of: model.dashboard?.config.vault) { _, vault in
+            if capturing && captureVault == nil { captureVault = vault }
+        }
+        .alert("Förkasta anteckningen?", isPresented: $discardCapture) {
+            Button("Fortsätt skriva", role: .cancel) {}
+            Button("Förkasta", role: .destructive) { model.showingCapture = false }
+        }
         .onChange(of: model.editorCommandRequest) { _, _ in openResearch() }
+        .onKeyPress(.escape) {
+            guard capturing && !busy && !extracting && research == nil else { return .ignored }
+            close()
+            return .handled
+        }
         .sheet(item: $insertion, onDismiss: { editor.view?.window?.makeFirstResponder(editor.view) }) { insertion in
             switch insertion {
             case .link(let label):
@@ -219,6 +296,7 @@ struct StudioNoteView: View {
         .alert("Byt till den sparade versionen?", isPresented: $replaceDraft) {
             Button("Avbryt", role: .cancel) {}
             Button("Hämta sparad", role: .destructive) {
+                guard let note else { return }
                 baseline = note
                 draftRevision = note.revision
                 updateDraft(note.body)
@@ -229,20 +307,38 @@ struct StudioNoteView: View {
     private var documentToolbar: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                Button("Tillbaka", systemImage: "chevron.left", action: model.closeEditor)
+                Button(capturing ? "Avbryt" : "Tillbaka", systemImage: "chevron.left", action: close)
                     .keyboardShortcut("[", modifiers: .command)
-                    .disabled(busy)
-                let appearance = model.appearance(for: hit)
-                Image(systemName: appearance.symbol.icon).foregroundStyle(appearance.accent.tint)
-                    .accessibilityHidden(true)
-                Text(hit.title).font(.title2.weight(.semibold)).lineLimit(1)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                Button("Spara") { commit(draft) }
+                    .disabled(busy || extracting)
+                if capturing {
+                    TextField("Rubrik, valfri", text: $title)
+                        .font(.title2.weight(.semibold))
+                        .textFieldStyle(.plain)
+                        .accessibilityIdentifier("capture-title")
+                        .disabled(busy)
+                } else if let hit {
+                    let appearance = model.appearance(for: hit)
+                    Image(systemName: appearance.symbol.icon).foregroundStyle(appearance.accent.tint)
+                        .accessibilityHidden(true)
+                    Text(hit.title).font(.title2.weight(.semibold)).lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer()
+                }
+                Button("Spara", action: save)
                     .keyboardShortcut("s", modifiers: .command)
-                    .disabled(!dirty || busy || conflicting)
+                    .disabled(!canSave)
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("studio-save")
+                if capturing {
+                    Button("Spara", action: save)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(!canSave)
+                        .frame(width: 0, height: 0)
+                        .opacity(0)
+                        .accessibilityHidden(true)
+                }
             }
+            if capturing { captureOptions }
             Divider()
             HStack {
                 Picker("Skrivverktyg", selection: $toolTab) {
@@ -254,7 +350,7 @@ struct StudioNoteView: View {
                 Spacer()
                 Button("Källor", systemImage: "text.magnifyingglass", action: openResearch)
                     .help("Sök i biblioteket och infoga en hänvisning (⌘K)")
-                    .disabled(busy)
+                    .disabled(busy || sourceDocument == nil)
                 Menu {
                     Button("Sök i anteckningen") { find(.showFindInterface) }
                         .keyboardShortcut("f", modifiers: .command)
@@ -270,8 +366,76 @@ struct StudioNoteView: View {
         .modifier(StudioToolbarBackground())
     }
 
+    private var captureOptions: some View {
+        HStack(spacing: 10) {
+            Menu("Mallar") {
+                ForEach(NoteTemplate.allCases, id: \.self) { template in
+                    Button(template.rawValue, systemImage: template.appearance.symbol.icon) {
+                        self.template = template
+                        if trimmed(title).isEmpty { title = template.rawValue }
+                        updateDraft(trimmed(draft).isEmpty ? template.body : draft + "\n\n" + template.body)
+                        inbox = false
+                    }
+                }
+            }
+            .fixedSize()
+            TextField("Källänk, valfri", text: $source)
+                .textFieldStyle(.roundedBorder)
+            if !Distribution.store {
+                Button(extracting ? "Hämtar…" : "Hämta artikel") {
+                    extracting = true
+                    let url = source
+                    Task {
+                        defer { extracting = false }
+                        if let text = await model.extract(url) {
+                            updateDraft(trimmed(draft).isEmpty ? text : draft + "\n\n" + text)
+                        }
+                    }
+                }
+                .disabled(extracting || trimmed(source).isEmpty)
+            }
+            Picker("Spara i", selection: $inbox) {
+                Text("Bibliotek").tag(false)
+                Text("Inkorg").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+        }
+        .disabled(busy)
+    }
+
+    private func close() {
+        if capturing {
+            if dirty || !trimmed(title).isEmpty || !trimmed(source).isEmpty {
+                discardCapture = true
+            } else {
+                model.showingCapture = false
+            }
+        } else {
+            model.closeEditor()
+        }
+    }
+
+    private func save() {
+        guard canSave else { return }
+        guard capturing else { commit(draft); return }
+        guard let captureVault, model.dashboard?.config.vault == captureVault else {
+            failure = "Biblioteket saknas eller har ändrats. Kopiera texten och öppna Fånga igen."
+            return
+        }
+        busy = true
+        let title = documentTitle
+        Task {
+            defer { busy = false }
+            if await model.capture(title: title, body: draft, source: source, inbox: inbox,
+                                   appearance: template?.appearance, draftVault: captureVault) {
+                model.showingCapture = false
+            }
+        }
+    }
+
     private func openResearch() {
-        guard !busy else { return }
+        guard !busy, sourceDocument != nil else { return }
         if research == nil, let selection = editor.view?.lookupText.trimmingCharacters(in: .whitespacesAndNewlines) {
             researchQuery = String(selection.prefix(240))
         }
@@ -423,7 +587,7 @@ struct StudioNoteView: View {
             case .export:
                 ForEach(StudioExport.allCases, id: \.self) { format in
                     Button(format.label, systemImage: format.icon) {
-                        format.save(markdown: draft, title: hit.title, in: editor.view?.window) { failure in
+                        format.save(markdown: draft, title: documentTitle, in: editor.view?.window) { failure in
                             model.error = failure
                         }
                     }
@@ -436,12 +600,14 @@ struct StudioNoteView: View {
                 Button(searching ? "Söker…" : "Visa samband", systemImage: "point.3.connected.trianglepath.dotted") {
                     findConnection()
                 }
-                .disabled(busy || searching).help("Utgår från markerad text eller stycket där du skriver")
+                .disabled(busy || searching || capturing)
+                .help(capturing ? "Spara anteckningen för att visa samband" : "Utgår från markerad text eller stycket där du skriver")
                 Button(showOutline ? "Dölj rubriker" : "Visa rubriker", systemImage: "list.bullet.indent") {
                     research = nil
                     showOutline.toggle()
                 }.disabled(raw)
                 Button("Versionshistorik", systemImage: "clock.arrow.circlepath") { research = .history }
+                    .disabled(capturing)
             }
             Spacer(minLength: 0)
         }
@@ -513,7 +679,7 @@ struct StudioNoteView: View {
                         .disabled(dirty || conflicting || busy)
                     Button("Visa i Atlas") {
                         model.show(.atlas)
-                        model.select(hit, train: false)
+                        if let hit { model.select(hit, train: false) }
                     }
                 } else {
                     Button("Koppla i Atlas") { commit(draft, link: suggestion) }.disabled(conflicting || busy)
@@ -535,7 +701,7 @@ struct StudioNoteView: View {
     }
 
     private func restoreDraft() {
-        guard !loaded else { return }
+        guard !loaded, let note else { return }
         loaded = true
         guard let url = try? StudioDraft.url(for: note), let bytes = try? Data(contentsOf: url),
               let saved = try? JSONDecoder().decode(StudioDraft.self, from: bytes), saved.text != note.body else { return }
@@ -551,6 +717,7 @@ struct StudioNoteView: View {
     }
 
     private func persistDraft() {
+        guard let note, let baseline else { return }
         do {
             let url = try StudioDraft.url(for: note)
             if draft == baseline.body && draftRevision == baseline.revision {
@@ -572,6 +739,7 @@ struct StudioNoteView: View {
     }
 
     private func findConnection() {
+        guard let note else { return }
         let query = editor.view?.lookupText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         clearConnection()
         guard !query.isEmpty else { lookupStatus = "Klicka i ett stycke eller markera text först."; return }
@@ -592,10 +760,9 @@ struct StudioNoteView: View {
     }
 
     private func commit(_ text: String, link: StudioSuggestion? = nil, undo: Bool = false) {
-        guard !busy, !conflicting else { return }
+        guard !busy, !conflicting, let expected = baseline else { return }
         busy = true
         failure = ""
-        let expected = baseline
         let savedDraft = draft
         let args: [String]
         if let link {
@@ -790,7 +957,7 @@ private struct StudioResearchPanel: View {
     let document: Note
     let mode: StudioResearchMode
     @Binding var query: String
-    let revision: String
+    let revision: String?
     let focusRequest: Int
     let setMode: (StudioResearchMode?) -> Void
     let insertCitation: ([String]) async throws -> Void
@@ -801,14 +968,14 @@ private struct StudioResearchPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Källor och versioner").font(.headline).accessibilityAddTraits(.isHeader)
+                Text(revision == nil ? "Källor" : "Källor och versioner").font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button("Stäng", systemImage: "xmark") { setMode(nil) }
                     .labelStyle(.iconOnly).buttonStyle(.plain)
             }
             HStack {
                 Button("Källor", systemImage: "text.magnifyingglass") { setMode(.sources) }
-                Button("Historik", systemImage: "clock.arrow.circlepath") { setMode(.history) }
+                if revision != nil { Button("Historik", systemImage: "clock.arrow.circlepath") { setMode(.history) } }
                 Button("Sök i text", systemImage: "magnifyingglass", action: findInDocument)
             }
             Divider()
@@ -816,7 +983,9 @@ private struct StudioResearchPanel: View {
             case .sources:
                 StudioSourcesView(document: document, query: $query, focusRequest: focusRequest, insertCitation: insertCitation)
             case .history:
-                StudioHistoryView(document: document, revision: revision, restore: restore, canRestore: canRestore)
+                if let revision {
+                    StudioHistoryView(document: document, revision: revision, restore: restore, canRestore: canRestore)
+                }
             case .citation(let citation):
                 StudioArchiveView(document: document, citation: citation)
             }

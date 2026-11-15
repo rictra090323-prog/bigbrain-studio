@@ -1,6 +1,6 @@
-# Python för BigBrains lokala bygge
+# Python runtime for local builds
 
-Hämta [Astrals Python 3.12.16 för Apple-chip](https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-aarch64-apple-darwin-install_only_stripped.tar.gz). Låt filen vara komprimerad och spara den i den här mappen som `python-3.12.16-arm64.tar.gz`. Om webbläsaren packar upp filen automatiskt kan du hämta den med kommandot nedan från projektets rotmapp.
+Download [Astral’s Python 3.12.16 for Apple silicon](https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-aarch64-apple-darwin-install_only_stripped.tar.gz). Keep the file compressed and save it in this directory as `python-3.12.16-arm64.tar.gz`. If your browser extracts it automatically, run the command below from the project root.
 
 ```sh
 curl --fail --location \
@@ -8,4 +8,4 @@ curl --fail --location \
   'https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-aarch64-apple-darwin-install_only_stripped.tar.gz'
 ```
 
-Byggsteget verifierar att SHA-256 är `353d5f1b4fd2715e7053f12f068435d5bbad16b91e057006b5d01e0925709a7e` före uppackning.
+The build verifies the SHA-256 checksum `353d5f1b4fd2715e7053f12f068435d5bbad16b91e057006b5d01e0925709a7e` before extracting the archive.
