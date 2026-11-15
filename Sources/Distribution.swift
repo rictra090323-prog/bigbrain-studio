@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import Security
 
 enum Distribution {
     static let store = Bundle.main.object(forInfoDictionaryKey: "BigBrainDistribution") as? String == "store"
@@ -73,14 +74,130 @@ enum DeviceModel {
         guard #available(macOS 26.0, *), case .available = SystemLanguageModel.default.availability else {
             throw BackendFailure(message: "Aktivera Apple Intelligence för att använda agentsvar på enheten.")
         }
-        let prompt: LocalPrompt = try await Bridge.invoke(["local-prompt"], input: input)
-        let session = LanguageModelSession(instructions: prompt.instructions)
-        let result = try await session.respond(to: prompt.content)
-        let text = result.content
-        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start <= end,
-              let reply = try? JSONSerialization.jsonObject(with: Data(text[start...end].utf8)) as? [String: String] else {
-            throw BackendFailure(message: "Modellen gav inget strukturerat svar. Försök med en kortare fråga.")
+        return try await runPreparedAgent(input) { prompt in
+            let session = LanguageModelSession(instructions: prompt.instructions)
+            return try await session.respond(to: prompt.content).content
         }
-        return try await Bridge.invoke(["local-finish"], input: Bridge.object(["state": prompt.state, "reply": reply]))
+    }
+}
+
+private func runPreparedAgent(_ input: Data?, respond: (LocalPrompt) async throws -> String) async throws -> AgentReply {
+    let prompt: LocalPrompt = try await Bridge.invoke(["local-prompt"], input: input)
+    let text = try await respond(prompt)
+    guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start <= end,
+          let reply = try? JSONSerialization.jsonObject(with: Data(text[start...end].utf8)) as? [String: String] else {
+        throw BackendFailure(message: "Modellen gav inget strukturerat svar. Försök med en kortare fråga.")
+    }
+    return try await Bridge.invoke(["local-finish"], input: Bridge.object(["state": prompt.state, "reply": reply]))
+}
+
+
+struct CustomModel {
+    let url: URL
+    let id: String
+
+    static var enabled: Bool { UserDefaults.standard.bool(forKey: "customModelEnabled") }
+
+    init(endpoint: String, id: String) throws {
+        let input = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let parts = URLComponents(string: input), let url = parts.url,
+              let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil,
+              parts.query == nil, parts.fragment == nil,
+              parts.scheme == "https" || parts.scheme == "http" && ["localhost", "127.0.0.1", "::1"].contains(host),
+              !model.isEmpty else {
+            throw BackendFailure(message: "Enter a model ID and an HTTPS endpoint. HTTP is supported on localhost.")
+        }
+        let base = url.path.isEmpty || url.path == "/" ? url.appendingPathComponent("v1") : url
+        self.url = base.path.hasSuffix("/chat/completions") ? base : base.appendingPathComponent("chat/completions")
+        self.id = model
+    }
+
+    static func configured() throws -> Self {
+        try Self(endpoint: UserDefaults.standard.string(forKey: "customModelEndpoint") ?? "",
+                 id: UserDefaults.standard.string(forKey: "customModelID") ?? "")
+    }
+
+    private var keychainItem: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "BigBrain custom model",
+         kSecAttrAccount as String: (Bundle.main.bundleIdentifier ?? "BigBrain") + "|" + url.absoluteString]
+    }
+
+    func setKey(_ key: String) throws {
+        let status: OSStatus
+        if key.isEmpty {
+            status = SecItemDelete(keychainItem as CFDictionary)
+        } else {
+            let data = Data(key.utf8)
+            let update = SecItemUpdate(keychainItem as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+            if update == errSecItemNotFound {
+                var item = keychainItem
+                item[kSecValueData as String] = data
+                status = SecItemAdd(item as CFDictionary, nil)
+            } else {
+                status = update
+            }
+        }
+        guard status == errSecSuccess || key.isEmpty && status == errSecItemNotFound else {
+            throw BackendFailure(message: "BigBrain could not update the model key in Keychain (\(status)).")
+        }
+    }
+
+    private func key() throws -> String? {
+        var query = keychainItem
+        query[kSecReturnData as String] = true
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = item as? Data else {
+            throw BackendFailure(message: "BigBrain could not read the model key from Keychain (\(status)).")
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func complete(instructions: String, content: String) async throws -> String {
+        struct Response: Decodable {
+            struct Choice: Decodable {
+                struct Message: Decodable { let content: String? }
+                let message: Message
+            }
+            let choices: [Choice]
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let key = try key() { request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": id, "stream": false,
+            "messages": [["role": "system", "content": instructions], ["role": "user", "content": content]]
+        ])
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        let session = URLSession(configuration: config, delegate: RefuseModelRedirects(), delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, result) = try await session.data(for: request)
+        guard let http = result as? HTTPURLResponse else { throw BackendFailure(message: "The model returned no HTTP response.") }
+        guard (200..<300).contains(http.statusCode) else {
+            throw BackendFailure(message: "The configured model returned HTTP \(http.statusCode). Check the endpoint, model ID and key.")
+        }
+        guard let content = try? JSONDecoder().decode(Response.self, from: data).choices.first?.message.content,
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw BackendFailure(message: "The model returned no text.")
+        }
+        return content
+    }
+
+    func run(_ input: Data?) async throws -> AgentReply {
+        try await runPreparedAgent(input) { prompt in
+            try await complete(instructions: prompt.instructions, content: prompt.content)
+        }
+    }
+}
+
+private final class RefuseModelRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }

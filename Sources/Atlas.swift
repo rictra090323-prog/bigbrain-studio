@@ -49,6 +49,7 @@ struct AtlasSnapshot: Decodable, Sendable {
 }
 
 let atlasInk = Color(red: 0.018, green: 0.022, blue: 0.035)
+let workspaceInk = Color(red: 0.058, green: 0.067, blue: 0.087)
 private let atlasIce = Color(red: 0.38, green: 0.91, blue: 0.86)
 private let atlasLilac = Color(red: 0.78, green: 0.66, blue: 1)
 private let atlasGold = Color(red: 1, green: 0.76, blue: 0.42)
@@ -80,7 +81,7 @@ private enum AtlasShape: String, CaseIterable {
     }
 }
 
-private struct OrbitCamera {
+struct OrbitCamera {
     static let homeDistance = 3.65
     static let near = 0.12
     static let zoomRange = 0.6...17.0
@@ -259,11 +260,12 @@ private struct AtlasOrbit: View {
     let focusRequest: Int
     let acceptsScroll: Bool
     let scrollExclusion: CGRect?
+    @Binding var camera: OrbitCamera
+    var decorative = false
     let choose: (AtlasNode?) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("atlasHaptics") private var haptics = true
-    @LocalState private var camera = OrbitCamera()
     @LocalState private var motion: OrbitMotion?
     @LocalState private var dragOrigin: OrbitCamera?
     @LocalState private var lastTick = -Double.infinity
@@ -307,6 +309,19 @@ private struct AtlasOrbit: View {
     }
 
     var body: some View {
+        if decorative {
+            Canvas { context, size in drawGraph(context, size: size, at: .distantFuture) }
+                .onChange(of: nodes, initial: true) { _, nodes in cloud = AtlasCloud(nodes: nodes) }
+                .onChange(of: visibleEdges, initial: true) { _, edges in self.edges = edges }
+                .onChange(of: shape, initial: true) { _, shape in
+                    morphTarget = shape == .brain ? 1 : 0
+                }
+        } else {
+            interactiveOrbit
+        }
+    }
+
+    private var interactiveOrbit: some View {
         GeometryReader { geometry in
             Rectangle().fill(.clear)
                 .overlay {
@@ -742,6 +757,34 @@ private struct AtlasOrbit: View {
     }
 }
 
+struct FrostedAtlasBackdrop: View {
+    let atlas: AtlasSnapshot?
+    let camera: OrbitCamera
+    @AppStorage("atlasShape") private var shape = AtlasShape.sphere
+
+    private var backgroundCamera: OrbitCamera {
+        var view = camera
+        view.zoom = min(max(camera.zoom, 0.85), 1.2)
+        view.focus = .zero
+        return view
+    }
+
+    var body: some View {
+        workspaceInk.overlay {
+            AtlasOrbit(atlas: atlas, selected: nil,
+                       shape: AtlasBrainSurface.bundled == nil ? .sphere : shape,
+                       onlyConnections: false, focusRequest: 0, acceptsScroll: false,
+                       scrollExclusion: nil, camera: .constant(backgroundCamera), decorative: true) { _ in }
+                .padding(.leading, 144)
+                .blur(radius: 2)
+                .saturation(0.7)
+                .opacity(0.58)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 private struct AtlasScrollInput: NSViewRepresentable {
     let enabled: Bool
     let exclusion: CGRect?
@@ -784,6 +827,7 @@ private struct AtlasScrollInput: NSViewRepresentable {
 
 struct AtlasView: View {
     @ObservedObject var model: BrainModel
+    @Binding var camera: OrbitCamera
     @AppStorage("atlasShape") private var shape = AtlasShape.sphere
     @AppStorage("atlasHaptics") private var haptics = true
     @LocalState private var onlyConnections = false
@@ -813,10 +857,8 @@ struct AtlasView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             masthead.padding(.horizontal, 21)
+            searchDropdown.padding(.horizontal, 21)
             starfield
-                .overlay(alignment: .top) {
-                    searchDropdown.padding(.horizontal, 21)
-                }
             footer
                 .padding(.horizontal, 21)
                 .simultaneousGesture(TapGesture().onEnded { dismissSearch() })
@@ -851,8 +893,7 @@ struct AtlasView: View {
         let term = searchPresented ? model.atlasSearchTerm : ""
         return VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 12) {
-                Text("Atlas").font(.system(size: 36, weight: .medium)).tracking(-1.8)
-                    .accessibilityAddTraits(.isHeader)
+                WorkspaceTitle("Atlas")
                     .onTapGesture { dismissSearch() }
                 Spacer()
                 WorkspaceActions(model: model)
@@ -881,7 +922,7 @@ struct AtlasView: View {
     private var searchDropdown: some View {
         if let state = visibleSearchState {
             let rowCount: Int = {
-                if case .results(let hits) = state { return min(8, max(2, hits.count)) }
+                if case .results(let hits) = state { return min(4, max(2, hits.count)) }
                 return 2
             }()
             Group {
@@ -969,7 +1010,8 @@ struct AtlasView: View {
                            shape: AtlasBrainSurface.bundled == nil ? .sphere : shape,
                            onlyConnections: onlyConnections && node != nil,
                            focusRequest: focusRequest, acceptsScroll: visibleSearchState == nil,
-                           scrollExclusion: inspectorVisible ? panelFrame : nil) { item in
+                           scrollExclusion: inspectorVisible ? panelFrame : nil,
+                           camera: $camera) { item in
                     dismissSearch()
                     if let item {
                         select(item.hit)
@@ -993,19 +1035,17 @@ struct AtlasView: View {
             }
             .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: inspectorVisible)
         }
-        .overlay(alignment: .topLeading) {
-            HStack(spacing: 11) {
-                legend("Anteckningar", atlasGold)
-                legend("Källor", atlasIce)
-                if !Distribution.store { legend("Skills", atlasLilac) }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .brainGlass(Capsule())
-            .padding(canvasInset)
-            .allowsHitTesting(false)
-        }
-        .overlay(alignment: .topTrailing) {
-            HStack(spacing: 6) {
+        .overlay(alignment: .top) {
+            HStack(spacing: 10) {
+                HStack(spacing: 11) {
+                    legend("Anteckningar", atlasGold)
+                    legend("Källor", atlasIce)
+                    if !Distribution.store { legend("Skills", atlasLilac) }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .brainGlass(Capsule())
+                .allowsHitTesting(false)
+                Spacer(minLength: 6)
                 if AtlasBrainSurface.bundled != nil {
                     GlassSegmentedControl(selection: $shape, options: AtlasShape.allCases,
                                           label: "Form i Atlas", segmentWidth: 58, title: { $0.title }) {
@@ -1087,11 +1127,17 @@ struct AtlasView: View {
                     Text("Utforska").font(.system(size: 14, weight: .semibold))
                     Spacer()
                     if graph?.nodes.isEmpty == false {
-                        Toggle("Alla synliga noder", systemImage: "list.bullet", isOn: $showAllNodes)
-                            .toggleStyle(.button)
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
-                            .help(showAllNodes ? "Visa senaste och fästa" : "Visa alla synliga noder")
+                        Button {
+                            showAllNodes.toggle()
+                        } label: {
+                            Image(systemName: showAllNodes ? "clock" : "list.bullet")
+                                .font(.system(size: 11, weight: .semibold))
+                                .frame(width: 26, height: 26)
+                                .brainGlass(Circle(), interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(showAllNodes ? "Visa senaste och fästa" : "Visa alla synliga noder")
+                        .help(showAllNodes ? "Visa senaste och fästa" : "Visa alla synliga noder")
                     }
                 }
             }
@@ -1110,7 +1156,7 @@ struct AtlasView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(atlasInk.opacity(0.34), in: frame)
+        .background(atlasInk.opacity(0.21), in: frame)
         .brainGlass(frame)
         .shadow(color: .black.opacity(0.32), radius: 14, y: 7)
         .accessibilityIdentifier("atlas-inspector")
@@ -1152,17 +1198,16 @@ struct AtlasView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             if item.kind == "note", !item.path.hasPrefix("Codex Skills/") {
-                Button("Öppna i redigeraren", systemImage: "square.and.pencil") {
+                ActionButton(title: "Redigera anteckning", icon: "square.and.pencil") {
                     model.openEditor(for: item)
                 }
-                .buttonStyle(.borderedProminent)
                 .disabled(model.note?.path != item.path)
             } else {
-                Button("Visa i biblioteket", systemImage: "arrow.up.right") {
+                ActionButton(title: "Visa i biblioteket", icon: "arrow.up.right") {
                     model.reply = nil
                     model.show(.search)
                     model.select(item, train: false)
-                }.buttonStyle(.borderedProminent)
+                }
             }
 
             if node != nil {
@@ -1211,14 +1256,12 @@ struct AtlasView: View {
             select(item)
         } label: {
             HStack(spacing: 9) {
-                Image(systemName: item.kind == "inbox" ? "tray" : item.kind == "skill" ? "square.stack.3d.up" : "doc.text")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(graph?.nodes.first(where: { $0.id == item.id })?.tint ?? atlasIce)
-                    .frame(width: 25, height: 25)
-                    .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
-                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.title).font(.system(size: 14, weight: .medium)).lineLimit(2).multilineTextAlignment(.leading)
+                    let appearance = model.appearance(for: item)
+                    let tint = item.kind == "skill" ? atlasLilac : item.isSource ? atlasIce :
+                        appearance.accent == .standard ? atlasGold : appearance.accent.tint
+                    EntryTypeLabel(hit: item, appearance: appearance, tint: tint)
                     if let subtitle {
                         Text(subtitle).font(.caption).foregroundStyle(.secondary)
                     }
@@ -1339,7 +1382,7 @@ private struct AtlasResultStyle: ButtonStyle {
 
         var body: some View {
             label
-                .background(Color.accentColor.opacity(pressed ? 0.64 : hovering ? 0.30 : 0),
+                .background(.white.opacity(pressed ? 0.18 : hovering ? 0.09 : 0),
                             in: RoundedRectangle(cornerRadius: capsule ? 100 : 10))
                 .onHover { hovering = $0 }
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hovering)
