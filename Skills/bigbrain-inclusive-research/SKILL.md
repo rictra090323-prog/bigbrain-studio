@@ -3,13 +3,13 @@ name: bigbrain-inclusive-research
 description: Plan and run BigBrain user research and accessibility checks for capture, Word import, retrieval, review, and orb navigation.
 ---
 
-# Användarstudier och tillgänglighet för BigBrain
+# User research and accessibility for BigBrain
 
-Använd samma kärnuppgift i vardag, studier och projektarbete. Låt en person spara eller importera något, hitta en uppgift senare och rätta en felaktig koppling. Välj deltagare utifrån de hinder vi behöver förstå, till exempel ovana vid digital organisering, tangentbordsnavigation, VoiceOver, äldre enhet eller avstängd AI.
+Use the same core task across everyday activities, study and project work. Ask a participant to save or import something, find it later and correct an inaccurate link. Recruit for the barriers you need to understand, such as limited experience with digital organisation, keyboard navigation, VoiceOver, older hardware or disabled AI.
 
-- Be deltagaren visa hur uppgiften löses i dag. Ge ett uppdrag och observera var personen tappar orienteringen. Spara egna utsagor och observerade handlingar som skilda slags underlag.
-- Kör samma uppgift i ett tomt och ett fyllt bibliotek. Kontrollera första fokus, begripligt namn på kontroller, växling mellan orb och lista, större text och minskad rörelse. Följ hela flödet fram till att källan kan öppnas eller ett förslag kan ångras.
-- Rapportera konkreta hinder och vem som mötte dem. Mät lyckat återfinnande, fel och behov av hjälp. Små urval visar vilka problem vi bör undersöka vidare.
-- Använd syntetiskt material som standard. Om ett test kräver riktiga anteckningar, låt deltagaren välja underlaget och håll råmaterialet utanför produktloggen.
+- Ask the participant to demonstrate their current approach. Give them a task and observe where they lose track. Record participant statements and observed actions separately.
+- Run the same task in both an empty and a populated library. Check initial focus, control labels, switching between graph and list, larger text and Reduce Motion. Follow the flow until the participant can open a source or undo a proposal.
+- Report specific barriers and who encountered them. Measure successful retrieval, errors and requests for help. Use small samples to identify which problems need more study.
+- Use synthetic material by default. If a test needs real notes, let the participant choose the sample and keep the raw text out of the product log.
 
-[Apple om test av appars tillgänglighet](https://developer.apple.com/help/app-store-connect/manage-app-accessibility/overview-of-accessibility-nutrition-labels)
+[Apple on app accessibility](https://developer.apple.com/help/app-store-connect/manage-app-accessibility/overview-of-accessibility-nutrition-labels)

@@ -3,13 +3,13 @@ name: bigbrain-local-ai-evaluation
 description: Evaluate BigBrain's on-device tagging, candidate retrieval, and note linking with and without Apple Intelligence.
 ---
 
-# Utvärdera BigBrains lokala AI
+# Evaluate BigBrain's on-device AI
 
-Bygg ett litet facit med fiktiva anteckningar och källstycken. Inkludera korta anteckningar, liknande projektnamn, otydliga fall och svenska, engelska samt blandat språk. Facit får ha flera godtagbara svar och ett uttryckligt osäkert fall.
+Build a small labelled set of fictional notes and source passages. Include short notes, similar project names, ambiguous cases, and Swedish, English and mixed-language examples. Allow multiple acceptable answers and include an explicit abstention case.
 
-- Jämför textbaserad sökning och enkla regler med samma kandidatlista plus den lokala modellen. Rapportera om rätt kandidat fanns i listan separat från om modellen valde rätt och angav rätt källstycke.
-- Registrera modell, systemversion, språk, tillgänglighet och svarstid. Skilj körfel från modellens avstående. Om ett fristående prov inte kan nå modellservicen, kör samma syntetiska material i en signerad Mac-testapp och redovisa miljöerna separat.
-- Mät modellens råa val och resultatet efter validering separat. Kontrollera valt ID, behörighet och att utdraget finns i källan. Kontrollera sedan att utdraget stödjer just kopplingen. Ett ordagrant utdrag om fel projekt kan fortfarande ge en felkoppling. Bestäm hur felkopplingar vägs mot missade förslag innan du öppnar resultatet.
-- Spara exempelfall, utfall och begränsningar i BigBrains projektanteckning. Behåll jämförelsefallet för nästa modell- eller systemversion.
+- Compare text search and simple rules with the same candidate list augmented by the on-device model. Report candidate recall separately from whether the model chose the right candidate and cited the right passage.
+- Record model, OS version, language, availability and latency. Separate runtime failures from model abstentions. If a standalone harness cannot reach the model service, run the same fixtures in a signed Mac test app and report the environments separately.
+- Measure raw model choices and post-validation results separately. Validate the target ID, access and exact excerpt. Then check whether that excerpt supports this link. An exact quote from the wrong project can still produce a false match. Decide how to weigh false links against missed suggestions before inspecting results.
+- Save cases, outcomes and limitations in the project note. Retain the comparison set for the next model or OS version.
 
-[Apple om lokal modell och tillgänglighet](https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel)
+[Apple on on-device model availability](https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel)
