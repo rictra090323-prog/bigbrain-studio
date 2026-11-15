@@ -42,12 +42,16 @@ with tempfile.TemporaryDirectory(prefix="bigbrain-skill-learning-") as directory
     payload["reply"]["path"] = "compare-experiment-routes"
     proposed = run("local-finish", data=payload)["proposal"]
     assert proposed
-    assert not run("search", "--scope", "skills", "compare-experiment-routes")
+    def learned(library=vault):
+        return [hit for hit in run("search", "--scope", "skills", "compare-experiment-routes", library=library)
+                if hit["path"] == "compare-experiment-routes/SKILL.md"]
+
+    assert not learned()
     assert not run("skill-review-ready")["ready"]
     assert run("local-finish", data=payload)["proposal"] is None
     run("apply", proposed)
-    hits = run("search", "--scope", "skills", "compare-experiment-routes")
+    hits = learned()
     assert hits and hits[0]["kind"] == "skill"
-    assert not run("search", "--scope", "skills", "compare-experiment-routes", library=other)
+    assert not learned(other)
 
 print("PASS: skill learning opt-in, distinct workflow count, safe path, review, replay and vault isolation")
